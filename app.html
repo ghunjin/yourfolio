@@ -65,12 +65,27 @@
 
   /* form */
   .form-panel{margin-bottom:24px}
-  /* Concentration warning banner: amber = caution, not a hard error. */
+  /* Concentration warning banner: amber = caution, not a hard error.
+     The banner is a container; each over-concentrated ticker gets its own row. */
   .warn-banner{background:rgba(255,180,84,0.1);border:1px solid rgba(255,180,84,0.35);
-    border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:24px;
-    font-size:.9rem;color:#ffcf8a;display:flex;align-items:flex-start;gap:10px;animation:slideIn .35s ease}
-  .warn-banner .warn-ico{font-size:1.1rem;line-height:1.4;flex-shrink:0}
-  .warn-banner b{color:#ffe0b3;font-weight:600}
+    border-radius:var(--radius-sm);padding:6px 14px;margin-bottom:24px;animation:slideIn .35s ease}
+  .warn-row{display:flex;align-items:flex-start;gap:10px;padding:10px 0;font-size:.9rem;color:#ffcf8a}
+  .warn-row + .warn-row{border-top:1px solid rgba(255,180,84,0.18)}
+  .warn-ico{font-size:1.1rem;line-height:1.4;flex-shrink:0}
+  .warn-text{flex:1;min-width:0}
+  .warn-text b{color:#ffe0b3;font-weight:600}
+  .warn-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .warn-mute{background:none;border:1px solid rgba(255,180,84,0.4);color:#ffcf8a;
+    font-family:inherit;font-size:.78rem;padding:5px 10px;border-radius:8px;cursor:pointer;
+    white-space:nowrap;transition:background .2s,border-color .2s}
+  .warn-mute:hover{background:rgba(255,180,84,0.15);border-color:rgba(255,180,84,0.6)}
+  .warn-x{background:none;border:none;color:#ffcf8a;font-size:1.2rem;line-height:1;
+    cursor:pointer;padding:2px 6px;border-radius:6px;transition:background .2s}
+  .warn-x:hover{background:rgba(255,180,84,0.15)}
+  @media(max-width:640px){
+    .warn-row{flex-wrap:wrap}
+    .warn-actions{width:100%;justify-content:flex-end}
+  }
   .form-head{font-family:'Sora';font-weight:600;font-size:1.05rem;margin-bottom:18px}
   .add-form{display:grid;grid-template-columns:minmax(80px,1fr) minmax(110px,1.3fr) minmax(70px,.8fr) minmax(90px,1fr) minmax(90px,1fr) max-content;gap:10px;align-items:end}
   .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -286,22 +301,59 @@
     return h.isDiversified === true;   // <-- API will populate this flag later
   }
 
+  // --- Concentration warning dismissals ---
+  // Two levels of "dismiss", tracked per-ticker:
+  //   sessionDismissed: cleared on refresh (the × button). Just an in-memory Set.
+  //   mutedTickers:     saved to storage, survives refresh ("Don't remind me again").
+  // Per-ticker (not blanket) on purpose: muting NVDA shouldn't hide a warning if a
+  // DIFFERENT stock later becomes over-concentrated.
+  const MUTE_KEY='yourfolio_muted_concentration';
+  let sessionDismissed=new Set();   // resets every page load
+  let mutedTickers=loadMuted();     // persisted across loads
+
+  function loadMuted(){
+    try{const s=localStorage.getItem(MUTE_KEY); if(s){const a=JSON.parse(s); if(Array.isArray(a)) return new Set(a);}}
+    catch(e){}
+    return new Set();
+  }
+  function saveMuted(){
+    try{localStorage.setItem(MUTE_KEY,JSON.stringify([...mutedTickers]));}catch(e){}
+  }
+
+  // Called by the × button: hide for this session only.
+  function dismissWarning(ticker){ sessionDismissed.add(ticker); render(); }
+  // Called by "Don't remind me again": hide permanently for this ticker.
+  function muteWarning(ticker){ mutedTickers.add(ticker); saveMuted(); render(); }
+
   // Builds the concentration warning banner (or hides it if nothing qualifies).
   function renderConcentrationWarning(totalValue){
     const banner=document.getElementById('concentrationWarning');
     if(totalValue<=0){banner.style.display='none';return;}
-    // Find holdings over the limit that aren't exempt.
+    // Holdings over the limit, not exempt, not dismissed (either way).
     const flagged=holdings
       .map(h=>({h,share:(h.shares*h.cur)/totalValue*100}))
-      .filter(x=>x.share>CONCENTRATION_LIMIT && !isExemptFromConcentration(x.h));
+      .filter(x=>x.share>CONCENTRATION_LIMIT
+        && !isExemptFromConcentration(x.h)
+        && !sessionDismissed.has(x.h.ticker)
+        && !mutedTickers.has(x.h.ticker));
     if(flagged.length===0){banner.style.display='none';return;}
-    // List the offending tickers and their share of the portfolio.
-    const parts=flagged.map(x=>`<b>${esc(x.h.ticker)}</b> (${x.share.toFixed(0)}%)`).join(', ');
-    banner.innerHTML=`<span class="warn-ico">&#9888;</span>
-      <span>High concentration: ${parts} ${flagged.length>1?'each make':'makes'} up
-      more than ${CONCENTRATION_LIMIT}% of your portfolio. A single position this large
-      means your returns ride heavily on one bet.</span>`;
-    banner.style.display='flex';
+
+    // One dismissible banner per flagged ticker, so each can be closed/muted
+    // independently (closing the NVDA warning shouldn't close a TSLA one).
+    banner.innerHTML=flagged.map(x=>{
+      const t=esc(x.h.ticker);
+      return `<div class="warn-row">
+        <span class="warn-ico">&#9888;</span>
+        <span class="warn-text"><b>${t}</b> makes up ${x.share.toFixed(0)}% of your portfolio
+          &mdash; more than ${CONCENTRATION_LIMIT}%. A position this large means your returns
+          ride heavily on one bet.</span>
+        <span class="warn-actions">
+          <button class="warn-mute" onclick="muteWarning('${t}')">Don't remind me again</button>
+          <button class="warn-x" onclick="dismissWarning('${t}')" title="Dismiss for now">&times;</button>
+        </span>
+      </div>`;
+    }).join('');
+    banner.style.display='block';
   }
 
   // Rebuilds the whole UI from the current `holdings` array.
