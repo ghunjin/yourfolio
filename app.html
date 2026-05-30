@@ -87,7 +87,20 @@
     .warn-actions{width:100%;justify-content:flex-end}
   }
   .form-head{font-family:'Sora';font-weight:600;font-size:1.05rem;margin-bottom:18px}
-  .add-form{display:grid;grid-template-columns:minmax(80px,1fr) minmax(110px,1.3fr) minmax(70px,.8fr) minmax(90px,1fr) minmax(90px,1fr) max-content;gap:10px;align-items:end}
+  .add-form{display:grid;grid-template-columns:minmax(72px,.9fr) minmax(100px,1.2fr) minmax(64px,.7fr) minmax(82px,.9fr) minmax(82px,.9fr) minmax(120px,1fr) max-content;gap:10px;align-items:end}
+  /* Date inputs: theme them toward the site's palette as far as browsers allow.
+     - color-scheme:dark  -> dark popup calendar AND a light, visible icon
+     - accent-color       -> recolors the selected day / highlights (Chromium)
+     Note: Safari does not render a separate, stylable calendar icon the way
+     Chromium does — so custom icon styling only affects Chromium browsers.
+     We keep it simple/visible rather than chasing a look Safari won't honor. */
+  .fld input[type=date],
+  .edit-in[type=date]{color-scheme:dark;accent-color:var(--accent)}
+  .fld input[type=date]::-webkit-calendar-picker-indicator,
+  .edit-in[type=date]::-webkit-calendar-picker-indicator{
+    cursor:pointer;opacity:.7;transition:opacity .2s}
+  .fld input[type=date]::-webkit-calendar-picker-indicator:hover,
+  .edit-in[type=date]::-webkit-calendar-picker-indicator:hover{opacity:1}
   .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
   .fld label{font-size:.72rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
   .fld input{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px;color:var(--text);font-family:inherit;font-size:.92rem;outline:none;transition:border-color .2s;min-width:0;width:100%}
@@ -141,9 +154,19 @@
     .top-grid{grid-template-columns:1fr}
     .add-form{grid-template-columns:1fr 1fr}
     .add-btn{grid-column:1/-1}
-    .lrow{grid-template-columns:1.4fr 1fr 1fr auto;gap:8px}
-    .lrow .lc.hide-m{display:none}
+    /* Display rows: hide buy/current to save space (still visible via edit). */
+    .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1fr auto;gap:8px}
+    .lrow:not(.editing) .lc.hide-m{display:none}
     .lrow.head .lc.hide-m{display:none}
+    /* EDIT rows: must show everything (you can't edit a hidden field), so they
+       switch to a wrapping flex layout where every labelled input is reachable
+       and the save/cancel buttons sit at the end. */
+    .lrow.editing{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+    .lrow.editing .lc.hide-m{display:block}   /* un-hide buy & current */
+    .lrow.editing .edit-asset{flex:1 1 100%}  /* ticker+name+shares on their own row */
+    .lrow.editing .lc.edit-fld{flex:1 1 110px} /* buy / current / date share a row */
+    .lrow.editing .lc:empty{display:none}      /* drop the empty gain/loss cell */
+    .lrow.editing .row-actions{margin-left:auto} /* push buttons to the far right */
     .panel{padding:22px}
   }
 </style>
@@ -198,9 +221,10 @@
       <div class="fld"><label>Shares</label><input id="inShares" type="number" min="0" step="any" placeholder="10"></div>
       <div class="fld"><label>Buy price</label><input id="inBuy" type="number" min="0" step="any" placeholder="168.40"></div>
       <div class="fld"><label>Current price</label><input id="inCur" type="number" min="0" step="any" placeholder="201.20"></div>
+      <div class="fld"><label>Buy date</label><input id="inDate" type="date" min="1980-01-01"></div>
       <button class="add-btn" onclick="addHolding()">+ Add</button>
     </div>
-    <div class="form-hint">Current price is entered manually for now &mdash; a live market feed is the next step.</div>
+    <div class="form-hint">Buy date is for the upcoming performance-over-time chart. Current price is manual for now &mdash; a live feed is the next step.</div>
   </div>
 
   <div class="lrow head">
@@ -220,12 +244,15 @@
      YOURFOLIO — tracker logic
      ------------------------------------------------------------
      Data model: `holdings` is an array of objects, each shaped like
-       { ticker, name, shares, buy, cur }
+       { ticker, name, shares, buy, cur, date }
        - ticker: stock symbol (string, e.g. "AAPL")
        - name:   display name (string, optional)
        - shares: number of shares owned
        - buy:    price you paid per share
        - cur:    current price per share (entered manually for now)
+       - date:   purchase date as "YYYY-MM-DD" (used by the future
+                 performance-over-time chart). May be missing on older
+                 saved data, so always handle the empty case.
 
      Core math (per holding):
        value = shares * cur          (what it's worth now)
@@ -252,9 +279,9 @@
 
   // Shown only on a first visit, before the user has saved anything.
   const SAMPLE=[
-    {ticker:'AAPL',name:'Apple',shares:25,buy:168.40,cur:201.20},
-    {ticker:'NVDA',name:'NVIDIA',shares:12,buy:92.10,cur:138.60},
-    {ticker:'TSLA',name:'Tesla',shares:8,buy:248.00,cur:215.30},
+    {ticker:'AAPL',name:'Apple',shares:25,buy:168.40,cur:201.20,date:'2024-03-12'},
+    {ticker:'NVDA',name:'NVIDIA',shares:12,buy:92.10,cur:138.60,date:'2024-06-04'},
+    {ticker:'TSLA',name:'Tesla',shares:8,buy:248.00,cur:215.30,date:'2024-09-20'},
   ];
 
   // Load saved holdings; fall back to the sample portfolio on first visit.
@@ -283,6 +310,17 @@
   // esc: makes user-typed text safe to drop into HTML (prevents broken layout
   // or injection if someone types characters like < > & ").
   const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // fmtDate: turns "2024-03-12" into a short readable "Mar 12, 2024".
+  // Returns '' if there's no date (older holdings may not have one).
+  function fmtDate(d){
+    if(!d) return '';
+    const dt=new Date(d+'T00:00:00');           // T00:00 avoids timezone shifting the day
+    if(isNaN(dt)) return '';
+    return dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+  }
+  // today's date as "YYYY-MM-DD", for defaulting the date picker.
+  function todayISO(){return new Date().toISOString().slice(0,10);}
 
   // Picks a palette color for holding number `i`, wrapping around if needed.
   function color(i){return PALETTE[i%PALETTE.length]}
@@ -372,7 +410,7 @@
         const pct=cost>0?gain/cost*100:0, up=gain>=0;
         return `<div class="lrow">
           <div class="asset"><div class="tk" style="background:${color(i)}">${esc(h.ticker.slice(0,4))}</div>
-            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares</div></div></div>
+            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares${h.date?' &middot; '+fmtDate(h.date):''}</div></div></div>
           <div class="lc hide-m cell">$${fmt(h.buy)}</div>
           <div class="lc hide-m cell">$${fmt(h.cur)}</div>
           <div class="lc cell">$${fmt(value)}</div>
@@ -417,8 +455,9 @@
       <!-- Cell 3: current price (hidden on mobile) -->
       <div class="lc hide-m edit-fld"><span class="edit-lbl">Current</span>
         <input class="edit-in" id="e_cur_${i}" type="number" step="any" value="${h.cur}"></div>
-      <!-- Cell 4: spacer where Value normally shows -->
-      <div class="lc" style="font-size:.78rem;color:var(--text-faint)">Editing&hellip;</div>
+      <!-- Cell 4: buy date (replaces the old decorative spacer) -->
+      <div class="lc edit-fld"><span class="edit-lbl">Buy date</span>
+        <input class="edit-in" id="e_date_${i}" type="date" min="1980-01-01" max="${todayISO()}" value="${esc(h.date||'')}"></div>
       <!-- Cell 5: empty (Gain/loss column) -->
       <div class="lc"></div>
       <!-- Cell 6: save / cancel buttons -->
@@ -475,6 +514,8 @@
   function addHolding(){
     const ticker=val('inTicker').toUpperCase(), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
+    // Buy date: use what's entered, or default to today if left blank.
+    const date=val('inDate')||todayISO();
     // Require a ticker and three positive numbers, else warn and stop.
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
@@ -489,15 +530,19 @@
       existing.shares=totalShares;
       existing.cur=cur;                 // refresh to the most recent price
       if(name) existing.name=name;      // let a newly typed name update the label
+      // Merged position keeps the EARLIER buy date — that's when this position
+      // began, which is what a value-over-time chart should anchor on.
+      if(date && (!existing.date || date<existing.date)) existing.date=date;
       // Brief confirmation so the merge isn't silently surprising.
       alert(`Added ${shares} more share(s) to ${ticker}. Position now ${fmt(totalShares)} `
         +`shares at an average buy price of $${fmt(existing.buy)}.`);
     } else {
-      holdings.push({ticker,name,shares,buy,cur});
+      holdings.push({ticker,name,shares,buy,cur,date});
     }
 
     saveHoldings();
-    ['inTicker','inName','inShares','inBuy','inCur'].forEach(id=>document.getElementById(id).value='');
+    ['inTicker','inName','inShares','inBuy','inCur','inDate'].forEach(id=>document.getElementById(id).value='');
+    setDefaultDate();                   // reset the picker back to today
     document.getElementById('inTicker').focus();
     render();
   }
@@ -512,8 +557,9 @@
     const shares=parseFloat(document.getElementById('e_shares_'+i).value);
     const buy=parseFloat(document.getElementById('e_buy_'+i).value);
     const cur=parseFloat(document.getElementById('e_cur_'+i).value);
+    const date=document.getElementById('e_date_'+i).value;   // may be '' if cleared
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){alert('Each field needs a valid positive value.');return;}
-    holdings[i]={ticker,name,shares,buy,cur}; editIndex=-1; saveHoldings(); render();
+    holdings[i]={ticker,name,shares,buy,cur,date}; editIndex=-1; saveHoldings(); render();
   }
   // Deletes holding `i`. If it was being edited, leave edit mode first.
   function removeHolding(i){if(editIndex===i)editIndex=-1;holdings.splice(i,1);saveHoldings();render();}
@@ -523,6 +569,16 @@
   const num=id=>parseFloat(document.getElementById(id).value); // numeric value
   // Pressing Enter in the last field (Current price) submits the form.
   document.getElementById('inCur').addEventListener('keydown',e=>{if(e.key==='Enter')addHolding();});
+
+  // Sets the add-form date picker to today's date (a sensible default that
+  // saves typing) and caps the selectable max at today, from the device clock.
+  // (The min is 1980-01-01, set in the HTML.) This blocks future-dated buys.
+  function setDefaultDate(){
+    const d=document.getElementById('inDate');
+    d.max=todayISO();        // device-clock-driven upper limit
+    d.value=todayISO();
+  }
+  setDefaultDate();
 
   // First paint when the page loads.
   render();
