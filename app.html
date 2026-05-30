@@ -65,6 +65,12 @@
 
   /* form */
   .form-panel{margin-bottom:24px}
+  /* Concentration warning banner: amber = caution, not a hard error. */
+  .warn-banner{background:rgba(255,180,84,0.1);border:1px solid rgba(255,180,84,0.35);
+    border-radius:var(--radius-sm);padding:14px 18px;margin-bottom:24px;
+    font-size:.9rem;color:#ffcf8a;display:flex;align-items:flex-start;gap:10px;animation:slideIn .35s ease}
+  .warn-banner .warn-ico{font-size:1.1rem;line-height:1.4;flex-shrink:0}
+  .warn-banner b{color:#ffe0b3;font-weight:600}
   .form-head{font-family:'Sora';font-weight:600;font-size:1.05rem;margin-bottom:18px}
   .add-form{display:grid;grid-template-columns:minmax(80px,1fr) minmax(110px,1.3fr) minmax(70px,.8fr) minmax(90px,1fr) minmax(90px,1fr) max-content;gap:10px;align-items:end}
   .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
@@ -165,6 +171,10 @@
     </div>
   </div>
 
+  <!-- Concentration warning banner. Hidden by default; render() fills and
+       shows it when any single holding exceeds the threshold. -->
+  <div id="concentrationWarning" class="warn-banner" style="display:none"></div>
+
   <div class="panel form-panel">
     <div class="form-head">Add a holding</div>
     <div class="add-form">
@@ -213,8 +223,13 @@
      ============================================================ */
 
   // Colors used for the donut slices and matching ticker badges.
-  // Add more hex values here if you ever hold more than 8 stocks.
-  const PALETTE=['#5b7cff','#36d399','#a98cff','#ffb454','#ff6b9d','#4fd1c5','#f6c453','#7d96ff'];
+  // 16 distinct hues, spaced around the color wheel so neighbours stay easy to
+  // tell apart. If you ever hold more than 16 stocks, add more hex values here;
+  // the code wraps around automatically (see the color() helper below).
+  const PALETTE=[
+    '#5b7cff','#36d399','#a98cff','#ffb454','#ff6b9d','#4fd1c5','#f6c453','#7d96ff',
+    '#ff8c69','#6ee7b7','#c084fc','#fbbf24','#f472b6','#22d3ee','#a3e635','#fb7185'
+  ];
 
   // The label used to store data in the browser. Changing this string
   // makes the app "forget" previously saved data (starts fresh).
@@ -257,6 +272,38 @@
   // Picks a palette color for holding number `i`, wrapping around if needed.
   function color(i){return PALETTE[i%PALETTE.length]}
 
+  // Any single holding worth more than this % of the portfolio triggers a
+  // concentration warning. 40% is a common rule-of-thumb for "too much in one bet."
+  const CONCENTRATION_LIMIT=40;
+
+  // Decides whether a holding should be SKIPPED by the concentration warning.
+  // Right now nothing is skipped. LATER (once the API can identify securities):
+  // diversified funds like an S&P 500 ETF are already spread across hundreds of
+  // companies, so a large position in one is NOT real concentration risk.
+  // When that data exists, set h.isDiversified = true on those holdings (or
+  // check h.type === 'etf'), and this function will exempt them automatically.
+  function isExemptFromConcentration(h){
+    return h.isDiversified === true;   // <-- API will populate this flag later
+  }
+
+  // Builds the concentration warning banner (or hides it if nothing qualifies).
+  function renderConcentrationWarning(totalValue){
+    const banner=document.getElementById('concentrationWarning');
+    if(totalValue<=0){banner.style.display='none';return;}
+    // Find holdings over the limit that aren't exempt.
+    const flagged=holdings
+      .map(h=>({h,share:(h.shares*h.cur)/totalValue*100}))
+      .filter(x=>x.share>CONCENTRATION_LIMIT && !isExemptFromConcentration(x.h));
+    if(flagged.length===0){banner.style.display='none';return;}
+    // List the offending tickers and their share of the portfolio.
+    const parts=flagged.map(x=>`<b>${esc(x.h.ticker)}</b> (${x.share.toFixed(0)}%)`).join(', ');
+    banner.innerHTML=`<span class="warn-ico">&#9888;</span>
+      <span>High concentration: ${parts} ${flagged.length>1?'each make':'makes'} up
+      more than ${CONCENTRATION_LIMIT}% of your portfolio. A single position this large
+      means your returns ride heavily on one bet.</span>`;
+    banner.style.display='flex';
+  }
+
   // Rebuilds the whole UI from the current `holdings` array.
   // Called after every change. Safe to call as often as you like.
   function render(){
@@ -294,6 +341,7 @@
     const bp=document.getElementById('bigGainPct'); bp.textContent=(up?'+':'\u2212')+Math.abs(totalPct).toFixed(2)+'%'; bp.className='val '+(up?'up':'down');
 
     drawDonut(totalValue);
+    renderConcentrationWarning(totalValue);
   }
 
   // Renders a single holding row in EDIT mode (inline editing).
@@ -363,7 +411,15 @@
 
   // --- Actions that change the data (each saves, then re-renders) ---
 
-  // Reads the "Add a holding" form, validates, appends, saves, clears the form.
+  // Reads the "Add a holding" form and validates the inputs.
+  // If the ticker already exists, it MERGES into that position using a
+  // weighted-average buy price (this is how a real "average cost" / DCA works):
+  //
+  //   new shares     = old shares + added shares
+  //   new avg buy    = (old shares*old buy + added shares*added buy) / new shares
+  //   current price  = the just-entered price (most recent known price)
+  //
+  // Otherwise it adds a brand-new row.
   function addHolding(){
     const ticker=val('inTicker').toUpperCase(), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
@@ -371,7 +427,23 @@
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
-    holdings.push({ticker,name,shares,buy,cur});
+
+    // Look for an existing holding with the same ticker (case-insensitive).
+    const existing=holdings.find(h=>h.ticker.toUpperCase()===ticker);
+    if(existing){
+      const totalShares=existing.shares+shares;
+      // Weighted-average buy price across the old and new lots.
+      existing.buy=(existing.shares*existing.buy + shares*buy)/totalShares;
+      existing.shares=totalShares;
+      existing.cur=cur;                 // refresh to the most recent price
+      if(name) existing.name=name;      // let a newly typed name update the label
+      // Brief confirmation so the merge isn't silently surprising.
+      alert(`Added ${shares} more share(s) to ${ticker}. Position now ${fmt(totalShares)} `
+        +`shares at an average buy price of $${fmt(existing.buy)}.`);
+    } else {
+      holdings.push({ticker,name,shares,buy,cur});
+    }
+
     saveHoldings();
     ['inTicker','inName','inShares','inBuy','inCur'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('inTicker').focus();
