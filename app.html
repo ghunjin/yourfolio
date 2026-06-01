@@ -96,6 +96,13 @@
      We keep it simple/visible rather than chasing a look Safari won't honor. */
   .fld input[type=date],
   .edit-in[type=date]{color-scheme:dark;accent-color:var(--accent)}
+  /* Native date inputs render slightly TALLER than text inputs (the calendar
+     widget has its own intrinsic height), so they stand out — most visibly on
+     mobile. Pin them to the same box height and stop the inner edit area from
+     adding its own height, so the field lines up with the others. */
+  .fld input[type=date]{height:40px;-webkit-appearance:none;appearance:none}
+  .fld input[type=date]::-webkit-date-and-time-value{margin:0;text-align:left}
+  .fld input[type=date]::-webkit-datetime-edit{padding:0;line-height:normal}
   .fld input[type=date]::-webkit-calendar-picker-indicator,
   .edit-in[type=date]::-webkit-calendar-picker-indicator{
     cursor:pointer;opacity:.7;transition:opacity .2s}
@@ -274,17 +281,9 @@
   const PRICE_KEY='yourfolio_prices';
   const OLD_KEY='yourfolio_holdings';
 
-  // Sample data for a first-ever visit, as individual transactions.
-  const SAMPLE_TX=[
-    {id:'seed_aapl',ticker:'AAPL',name:'Apple',shares:25,buy:168.40,date:'2024-03-12'},
-    {id:'seed_nvda',ticker:'NVDA',name:'NVIDIA',shares:12,buy:92.10,date:'2024-06-04'},
-    {id:'seed_tsla',ticker:'TSLA',name:'Tesla',shares:8,buy:248.00,date:'2024-09-20'},
-  ];
-  const SAMPLE_PRICES={AAPL:201.20,NVDA:138.60,TSLA:215.30};
-
   // --- Load + migrate ---------------------------------------------------
-  // Priority: (1) new transaction data, (2) migrate old position data,
-  // (3) first visit -> sample portfolio.
+  // Priority: (1) existing transaction data, (2) migrate old position data,
+  // (3) first visit -> start EMPTY (the user enters their own holdings).
   function loadData(){
     try{
       const rawTx=localStorage.getItem(TX_KEY);
@@ -320,9 +319,8 @@
       }
     }catch(e){}
 
-    // First visit: seed samples (and persist so it's stable).
-    saveData(SAMPLE_TX.slice(), {...SAMPLE_PRICES});
-    return {transactions:SAMPLE_TX.slice(), prices:{...SAMPLE_PRICES}};
+    // First visit (and no old data to migrate): start empty.
+    return {transactions:[], prices:{}};
   }
   function saveData(tx, pr){
     try{

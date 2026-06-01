@@ -54,6 +54,15 @@
   .dash-total{font-family:'Sora';font-weight:700;font-size:2.3rem;letter-spacing:-0.03em}
   .dash-total .cur{color:var(--text-dim);font-size:1.4rem;font-weight:500}
   .dash-gain{font-weight:600;font-size:1rem;color:var(--up);background:rgba(54,211,153,0.12);padding:6px 12px;border-radius:100px}
+  /* Sample dashboard top: portfolio value/returns on the LEFT, composition
+     donut on the RIGHT, side by side. The holdings rows sit full-width below. */
+  .dash-head{display:flex;align-items:center;justify-content:space-between;gap:28px}
+  .dash-info{flex:1;min-width:0}
+  .dash-donut{display:flex;align-items:center;gap:16px;flex-shrink:0}
+  .dash-donut .ddlegend{display:flex;flex-direction:column;gap:7px;font-size:.8rem}
+  .dash-donut .ddleg-item{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .dash-donut .ddleg-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+  .dash-donut .ddleg-pct{color:var(--text-faint);font-variant-numeric:tabular-nums}
   .holdings{margin-top:24px;display:flex;flex-direction:column;gap:10px}
   .row{display:grid;grid-template-columns:1.4fr 1fr 1fr 1.1fr;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:13px 16px}
   .row.head{background:transparent;border:none;padding:0 16px 2px;font-size:.72rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
@@ -81,7 +90,7 @@
   .stat .lbl{color:var(--text-dim);font-size:.95rem;margin-top:4px}
   .cta-band{position:relative;z-index:1;max-width:1100px;margin:60px auto 0;padding:0 7vw}
   .cta-inner{background:linear-gradient(135deg,#1a1d2b,#14151c);border:1px solid var(--line);border-radius:32px;padding:70px 50px;text-align:center;position:relative;overflow:hidden}
-  .cta-inner::after{content:'';position:absolute;bottom:-50%;left:50%;transform:translateX(-50%);width:600px;height:600px;background:radial-gradient(circle,var(--accent-glow),transparent 60%);filter:blur(30px);opacity:.6}
+  .cta-inner::after{content:'';position:absolute;bottom:-50%;left:50%;transform:translateX(-50%);width:600px;height:600px;background:radial-gradient(circle,var(--accent-glow),transparent 60%);filter:blur(30px);opacity:.6;pointer-events:none}
   .cta-inner h2{position:relative;font-family:'Sora';font-weight:700;font-size:clamp(1.8rem,4vw,2.7rem);letter-spacing:-0.035em;margin-bottom:16px}
   .cta-inner p{position:relative;color:var(--text-dim);margin-bottom:32px}
   footer{position:relative;z-index:1;border-top:1px solid var(--line);margin-top:90px;padding:50px 7vw;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
@@ -100,6 +109,9 @@
     .row .cell:nth-child(2),.row .cell:nth-child(3){display:none}
     .row.head .cell:nth-child(2),.row.head .cell:nth-child(3){display:none}
     .dash-static{padding:18px}
+    /* On mobile, stack the donut below the value instead of beside it */
+    .dash-head{flex-direction:column;align-items:stretch;gap:18px}
+    .dash-donut{justify-content:center}
   }
 </style>
 </head>
@@ -124,9 +136,31 @@
   </div>
   <div class="hero-visual">
     <div class="dash-static">
-      <div class="dash-top">
-        <div><div class="dash-label">Total portfolio value</div><div class="dash-total"><span class="cur">$</span>48,920<span class="cur">.50</span></div></div>
-        <div class="dash-gain">&#9650; +$6,310 (+14.8%)</div>
+      <div class="dash-head">
+        <div class="dash-info">
+          <div class="dash-top">
+            <div><div class="dash-label">Total portfolio value</div><div class="dash-total"><span class="cur">$</span>48,920<span class="cur">.50</span></div></div>
+          </div>
+          <div class="dash-gain" style="display:inline-block">&#9650; +$6,310 (+14.8%)</div>
+        </div>
+        <div class="dash-donut">
+          <svg width="110" height="110" viewBox="0 0 110 110" style="flex-shrink:0">
+            <circle cx="55" cy="55" r="46" fill="none" stroke="var(--card)" stroke-width="15"/>
+            <circle cx="55" cy="55" r="46" fill="none" stroke="#5b7cff" stroke-width="15"
+              stroke-dasharray="172.75 116.28" stroke-dashoffset="0" transform="rotate(-90 55 55)"/>
+            <circle cx="55" cy="55" r="46" fill="none" stroke="#36d399" stroke-width="15"
+              stroke-dasharray="57.12 231.91" stroke-dashoffset="-172.75" transform="rotate(-90 55 55)"/>
+            <circle cx="55" cy="55" r="46" fill="none" stroke="#ffb454" stroke-width="15"
+              stroke-dasharray="59.15 229.87" stroke-dashoffset="-229.87" transform="rotate(-90 55 55)"/>
+            <text x="55" y="52" text-anchor="middle" style="font-family:'Sora';font-weight:700;font-size:.9rem;fill:var(--text)">3</text>
+            <text x="55" y="65" text-anchor="middle" style="font-size:.52rem;fill:var(--text-faint);text-transform:uppercase;letter-spacing:.06em">assets</text>
+          </svg>
+          <div class="ddlegend">
+            <div class="ddleg-item"><span class="ddleg-dot" style="background:#5b7cff"></span>AAPL<span class="ddleg-pct">&middot; 59.8%</span></div>
+            <div class="ddleg-item"><span class="ddleg-dot" style="background:#36d399"></span>NVDA<span class="ddleg-pct">&middot; 19.8%</span></div>
+            <div class="ddleg-item"><span class="ddleg-dot" style="background:#ffb454"></span>TSLA<span class="ddleg-pct">&middot; 20.5%</span></div>
+          </div>
+        </div>
       </div>
       <div class="holdings">
         <div class="row head"><div class="cell">Asset</div><div class="cell">Avg buy</div><div class="cell">Current</div><div class="cell">Gain / loss</div></div>
@@ -153,19 +187,11 @@
     <div class="feature reveal"><div class="ic num">3</div><h3>See your return</h3><p>Instantly know what you've earned &mdash; per stock and across everything.</p></div>
   </div>
 </section>
-<section class="block" id="numbers">
-  <div class="reveal"><div class="section-tag">Why it matters</div><div class="section-title">Most people don't actually know their returns.</div></div>
-  <div class="stats reveal">
-    <div class="stat"><div class="num">60s</div><div class="lbl">to add a full portfolio</div></div>
-    <div class="stat"><div class="num">2</div><div class="lbl">markets, one view</div></div>
-    <div class="stat"><div class="num">0</div><div class="lbl">spreadsheets needed</div></div>
-  </div>
-</section>
-<div class="cta-band"><div class="cta-inner reveal"><h2>See what you've really earned.</h2><p>Add your first holding and watch your real return appear.</p><a href="app.html" class="btn-primary">Open the tracker</a></div></div>
+<div class="cta-band"><div class="cta-inner reveal"><h2>See what you've really earned.</h2><p>Add your first holding and watch your real return appear.</p><a href="app.html" class="btn-primary" style="position:relative">Open the tracker</a></div></div>
 <footer>
   <div class="brand"><span class="dot"></span>Yourfolio</div>
   <div class="foot-links"><a href="#features">Features</a><a href="#how">How it works</a><a href="app.html">Tracker</a><a href="#">Contact</a></div>
-  <div class="copyright">&copy; 2026 Yourfolio. A project by Ghun.</div>
+  <div class="copyright">&copy; 2026 Yourfolio. A project by Ghun Jin.</div>
 </footer>
 <script>
   const nav=document.getElementById('nav');
