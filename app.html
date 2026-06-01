@@ -120,7 +120,7 @@
   input[type=number]{-moz-appearance:textfield;appearance:textfield}
 
   /* holdings table */
-  .lrow{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1.2fr auto;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:10px;animation:slideIn .35s ease}
+  .lrow{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr 1.2fr;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:10px;animation:slideIn .35s ease}
   @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   .lrow.head{background:transparent;border:none;padding:0 16px 2px;font-size:.72rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
   .tk{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:.68rem;font-weight:700;color:#fff;flex-shrink:0}
@@ -155,7 +155,7 @@
     .add-form{grid-template-columns:1fr 1fr}
     .add-btn{grid-column:1/-1}
     /* Display rows: hide buy/current to save space (still visible via edit). */
-    .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1fr auto;gap:8px}
+    .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1.2fr;gap:8px}
     .lrow:not(.editing) .lc.hide-m{display:none}
     .lrow.head .lc.hide-m{display:none}
     /* EDIT rows: must show everything (you can't edit a hidden field), so they
@@ -175,7 +175,10 @@
 <div class="glow"></div>
 <nav>
   <a href="index.html" class="brand"><span class="dot"></span>Yourfolio</a>
-  <a href="index.html" class="back-link">&larr; Back to home</a>
+  <div style="display:flex;gap:22px;align-items:center">
+    <a href="transactions.html" class="back-link">Transactions</a>
+    <a href="index.html" class="back-link">&larr; Back to home</a>
+  </div>
 </nav>
 
 <div class="wrap">
@@ -224,130 +227,175 @@
       <div class="fld"><label>Buy date</label><input id="inDate" type="date" min="1980-01-01"></div>
       <button class="add-btn" onclick="addHolding()">+ Add</button>
     </div>
-    <div class="form-hint">Buy date is for the upcoming performance-over-time chart. Current price is manual for now &mdash; a live feed is the next step.</div>
+    <div class="form-hint">Adding a buy records it in your transaction log. Buy the same ticker again and it averages in automatically. Current price is manual for now &mdash; a live feed is the next step.</div>
   </div>
 
   <div class="lrow head">
     <div class="lc">Asset</div>
-    <div class="lc hide-m">Buy price</div>
+    <div class="lc hide-m">Avg buy</div>
     <div class="lc hide-m">Current</div>
     <div class="lc">Value</div>
     <div class="lc">Gain / loss</div>
-    <div class="lc"></div>
   </div>
   <div id="holdingsList"></div>
-  <div class="note">Your holdings are saved in this browser. Live market prices are the next step.</div>
+  <div class="note">This is a summary. Add, edit, or delete individual buys on the <a href="transactions.html" style="color:var(--accent-soft);text-decoration:none">transactions page</a>.</div>
 </div>
 
 <script>
   /* ============================================================
-     YOURFOLIO — tracker logic
+     YOURFOLIO — tracker logic (transaction-model version)
      ------------------------------------------------------------
-     Data model: `holdings` is an array of objects, each shaped like
-       { ticker, name, shares, buy, cur, date }
-       - ticker: stock symbol (string, e.g. "AAPL")
-       - name:   display name (string, optional)
-       - shares: number of shares owned
-       - buy:    price you paid per share
-       - cur:    current price per share (entered manually for now)
-       - date:   purchase date as "YYYY-MM-DD" (used by the future
-                 performance-over-time chart). May be missing on older
-                 saved data, so always handle the empty case.
+     The SOURCE OF TRUTH is now a flat list of individual buys
+     ("transactions"), shared with transactions.html via localStorage.
+       transactions = [ { id, ticker, name, shares, buy, date }, ... ]
+       prices       = { TICKER: currentPricePerShare }
 
-     Core math (per holding):
-       value = shares * cur          (what it's worth now)
-       cost  = shares * buy          (what you paid)
-       gain  = value - cost          (profit or loss)
-       pct   = gain / cost * 100     (percent return)
+     This page DERIVES the portfolio summary (one "position" per ticker)
+     from those transactions every time it renders. The donut, totals and
+     concentration warning all read the derived positions, which have the
+     same shape the old code used: { ticker, name, shares, buy, cur, date }.
 
-     Main flow: any change to `holdings` calls saveHoldings() then render().
-     render() recomputes all totals, redraws the table and the donut.
+     Per-position math (unchanged):
+       value = shares * cur          cost = shares * buy
+       gain  = value - cost          pct  = gain / cost * 100
+
+     Adding a buy here just APPENDS a transaction (and updates the price
+     for that ticker). Editing/deleting individual buys lives on the
+     transactions page, so this summary table is read-only.
      ============================================================ */
 
-  // Colors used for the donut slices and matching ticker badges.
-  // 16 distinct hues, spaced around the color wheel so neighbours stay easy to
-  // tell apart. If you ever hold more than 16 stocks, add more hex values here;
-  // the code wraps around automatically (see the color() helper below).
   const PALETTE=[
     '#5b7cff','#36d399','#a98cff','#ffb454','#ff6b9d','#4fd1c5','#f6c453','#7d96ff',
     '#ff8c69','#6ee7b7','#c084fc','#fbbf24','#f472b6','#22d3ee','#a3e635','#fb7185'
   ];
 
-  // The label used to store data in the browser. Changing this string
-  // makes the app "forget" previously saved data (starts fresh).
-  const STORAGE_KEY='yourfolio_holdings';
+  // Storage keys (shared with transactions.html). OLD_KEY = pre-refactor data.
+  const TX_KEY='yourfolio_transactions';
+  const PRICE_KEY='yourfolio_prices';
+  const OLD_KEY='yourfolio_holdings';
 
-  // Shown only on a first visit, before the user has saved anything.
-  const SAMPLE=[
-    {ticker:'AAPL',name:'Apple',shares:25,buy:168.40,cur:201.20,date:'2024-03-12'},
-    {ticker:'NVDA',name:'NVIDIA',shares:12,buy:92.10,cur:138.60,date:'2024-06-04'},
-    {ticker:'TSLA',name:'Tesla',shares:8,buy:248.00,cur:215.30,date:'2024-09-20'},
+  // Sample data for a first-ever visit, as individual transactions.
+  const SAMPLE_TX=[
+    {id:'seed_aapl',ticker:'AAPL',name:'Apple',shares:25,buy:168.40,date:'2024-03-12'},
+    {id:'seed_nvda',ticker:'NVDA',name:'NVIDIA',shares:12,buy:92.10,date:'2024-06-04'},
+    {id:'seed_tsla',ticker:'TSLA',name:'Tesla',shares:8,buy:248.00,date:'2024-09-20'},
   ];
+  const SAMPLE_PRICES={AAPL:201.20,NVDA:138.60,TSLA:215.30};
 
-  // Load saved holdings; fall back to the sample portfolio on first visit.
-  function loadHoldings(){
+  // --- Load + migrate ---------------------------------------------------
+  // Priority: (1) new transaction data, (2) migrate old position data,
+  // (3) first visit -> sample portfolio.
+  function loadData(){
     try{
-      const saved=localStorage.getItem(STORAGE_KEY);
-      if(saved){const arr=JSON.parse(saved); if(Array.isArray(arr)) return arr;}
-    }catch(e){/* storage unavailable (e.g. preview) — fall through */}
-    return SAMPLE.slice();
+      const rawTx=localStorage.getItem(TX_KEY);
+      if(rawTx){
+        const tx=JSON.parse(rawTx);
+        if(Array.isArray(tx)){
+          let pr={};
+          try{const rp=localStorage.getItem(PRICE_KEY); if(rp){const p=JSON.parse(rp); if(p&&typeof p==='object') pr=p;}}catch(e){}
+          return {transactions:tx, prices:pr};
+        }
+      }
+    }catch(e){}
+
+    // Migrate old single-page position data into transactions, once.
+    try{
+      const rawOld=localStorage.getItem(OLD_KEY);
+      if(rawOld){
+        const old=JSON.parse(rawOld);
+        if(Array.isArray(old) && old.length){
+          const transactions=[], prices={};
+          old.forEach(h=>{
+            const tkr=String(h.ticker||'').toUpperCase();
+            if(!tkr) return;
+            transactions.push({
+              id:newId(), ticker:tkr, name:h.name||tkr,
+              shares:+h.shares||0, buy:+h.buy||0, date:h.date||''
+            });
+            if(h.cur!=null) prices[tkr]=+h.cur||0;
+          });
+          saveData(transactions, prices);
+          return {transactions, prices};
+        }
+      }
+    }catch(e){}
+
+    // First visit: seed samples (and persist so it's stable).
+    saveData(SAMPLE_TX.slice(), {...SAMPLE_PRICES});
+    return {transactions:SAMPLE_TX.slice(), prices:{...SAMPLE_PRICES}};
   }
-  function saveHoldings(){
-    try{localStorage.setItem(STORAGE_KEY,JSON.stringify(holdings));}
-    catch(e){/* storage blocked — app still works in-memory */}
+  function saveData(tx, pr){
+    try{
+      localStorage.setItem(TX_KEY, JSON.stringify(tx));
+      localStorage.setItem(PRICE_KEY, JSON.stringify(pr));
+    }catch(e){/* storage blocked — still works in memory */}
   }
 
-  // `holdings` holds the live data; `editIndex` tracks which row (if any)
-  // is currently being edited (-1 means none).
-  let holdings=loadHoldings();
-  let editIndex=-1;
+  // Live state.
+  let {transactions, prices} = loadData();
 
-  // --- Small formatting helpers ---
-  // fmt: turns a number into "1,234.56" with commas and 2 decimals.
+  // --- Derive positions from transactions -------------------------------
+  // Groups transactions by ticker and produces the position objects the rest
+  // of the UI consumes. shares sum; buy = weighted-average; cur from prices
+  // map; date = earliest buy (chart anchor); lastDate = most-recent buy.
+  function derivePositions(){
+    const byTicker={};
+    transactions.forEach(tx=>{
+      const key=String(tx.ticker||'').toUpperCase();
+      if(!key) return;
+      if(!byTicker[key]){
+        byTicker[key]={ticker:key,name:tx.name||key,shares:0,costSum:0,earliest:tx.date||'',latest:tx.date||''};
+      }
+      const p=byTicker[key];
+      p.shares+=(+tx.shares||0);
+      p.costSum+=(+tx.shares||0)*(+tx.buy||0);
+      if(tx.name) p.name=tx.name;
+      if(tx.date){
+        if(!p.earliest || tx.date<p.earliest) p.earliest=tx.date;
+        if(!p.latest   || tx.date>p.latest)   p.latest=tx.date;
+      }
+    });
+    return Object.values(byTicker).map(p=>({
+      ticker:p.ticker,
+      name:p.name,
+      shares:p.shares,
+      buy:p.shares>0?p.costSum/p.shares:0,
+      cur:+prices[p.ticker]||0,
+      date:p.earliest,
+      lastDate:p.latest
+    }));
+  }
+
+  // --- Small formatting helpers (unchanged) ---
   const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  // fmtSigned: adds a +/− sign and a $ in front, e.g. "+$1,234.56".
   const fmtSigned=n=>(n>=0?'+':'\u2212')+'$'+fmt(Math.abs(n));
-  // esc: makes user-typed text safe to drop into HTML (prevents broken layout
-  // or injection if someone types characters like < > & ").
   const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-  // fmtDate: turns "2024-03-12" into a short readable "Mar 12, 2024".
-  // Returns '' if there's no date (older holdings may not have one).
   function fmtDate(d){
     if(!d) return '';
-    const dt=new Date(d+'T00:00:00');           // T00:00 avoids timezone shifting the day
+    const dt=new Date(d+'T00:00:00');
     if(isNaN(dt)) return '';
     return dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
   }
-  // today's date as "YYYY-MM-DD", for defaulting the date picker.
   function todayISO(){return new Date().toISOString().slice(0,10);}
+  function newId(){return 'tx_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);}
 
-  // Picks a palette color for holding number `i`, wrapping around if needed.
-  function color(i){return PALETTE[i%PALETTE.length]}
-
-  // Any single holding worth more than this % of the portfolio triggers a
-  // concentration warning. 40% is a common rule-of-thumb for "too much in one bet."
-  const CONCENTRATION_LIMIT=40;
-
-  // Decides whether a holding should be SKIPPED by the concentration warning.
-  // Right now nothing is skipped. LATER (once the API can identify securities):
-  // diversified funds like an S&P 500 ETF are already spread across hundreds of
-  // companies, so a large position in one is NOT real concentration risk.
-  // When that data exists, set h.isDiversified = true on those holdings (or
-  // check h.type === 'etf'), and this function will exempt them automatically.
-  function isExemptFromConcentration(h){
-    return h.isDiversified === true;   // <-- API will populate this flag later
+  // Stable color per ticker (matches transactions.html so colors agree across
+  // pages). Hashes the ticker string to a palette index.
+  function colorFor(ticker){
+    let h=0; const t=String(ticker).toUpperCase();
+    for(let i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))>>>0;
+    return PALETTE[h%PALETTE.length];
   }
 
-  // --- Concentration warning dismissals ---
-  // Two levels of "dismiss", tracked per-ticker:
-  //   sessionDismissed: cleared on refresh (the × button). Just an in-memory Set.
-  //   mutedTickers:     saved to storage, survives refresh ("Don't remind me again").
-  // Per-ticker (not blanket) on purpose: muting NVDA shouldn't hide a warning if a
-  // DIFFERENT stock later becomes over-concentrated.
+  const CONCENTRATION_LIMIT=40;
+
+  // Exemption hook for later (diversified ETFs shouldn't trip the warning).
+  function isExemptFromConcentration(h){ return h.isDiversified===true; }
+
+  // --- Concentration warning dismissals (unchanged behavior) ---
   const MUTE_KEY='yourfolio_muted_concentration';
-  let sessionDismissed=new Set();   // resets every page load
-  let mutedTickers=loadMuted();     // persisted across loads
+  let sessionDismissed=new Set();
+  let mutedTickers=loadMuted();
 
   function loadMuted(){
     try{const s=localStorage.getItem(MUTE_KEY); if(s){const a=JSON.parse(s); if(Array.isArray(a)) return new Set(a);}}
@@ -357,27 +405,19 @@
   function saveMuted(){
     try{localStorage.setItem(MUTE_KEY,JSON.stringify([...mutedTickers]));}catch(e){}
   }
-
-  // Called by the × button: hide for this session only.
   function dismissWarning(ticker){ sessionDismissed.add(ticker); render(); }
-  // Called by "Don't remind me again": hide permanently for this ticker.
   function muteWarning(ticker){ mutedTickers.add(ticker); saveMuted(); render(); }
 
-  // Builds the concentration warning banner (or hides it if nothing qualifies).
-  function renderConcentrationWarning(totalValue){
+  function renderConcentrationWarning(positions, totalValue){
     const banner=document.getElementById('concentrationWarning');
     if(totalValue<=0){banner.style.display='none';return;}
-    // Holdings over the limit, not exempt, not dismissed (either way).
-    const flagged=holdings
+    const flagged=positions
       .map(h=>({h,share:(h.shares*h.cur)/totalValue*100}))
       .filter(x=>x.share>CONCENTRATION_LIMIT
         && !isExemptFromConcentration(x.h)
         && !sessionDismissed.has(x.h.ticker)
         && !mutedTickers.has(x.h.ticker));
     if(flagged.length===0){banner.style.display='none';return;}
-
-    // One dismissible banner per flagged ticker, so each can be closed/muted
-    // independently (closing the NVDA warning shouldn't close a TSLA one).
     banner.innerHTML=flagged.map(x=>{
       const t=esc(x.h.ticker);
       return `<div class="warn-row">
@@ -394,31 +434,26 @@
     banner.style.display='block';
   }
 
-  // Rebuilds the whole UI from the current `holdings` array.
-  // Called after every change. Safe to call as often as you like.
+  // --- Render (summary table is read-only now) --------------------------
   function render(){
+    const positions=derivePositions();
     const list=document.getElementById('holdingsList');
     let totalValue=0,totalInvested=0;
-    holdings.forEach(h=>{totalValue+=h.shares*h.cur;totalInvested+=h.shares*h.buy;});
+    positions.forEach(h=>{totalValue+=h.shares*h.cur;totalInvested+=h.shares*h.buy;});
 
-    if(holdings.length===0){
+    if(positions.length===0){
       list.innerHTML='<div class="empty">No holdings yet. Add one above to see your return.</div>';
     } else {
-      list.innerHTML=holdings.map((h,i)=>{
-        if(i===editIndex) return editRowHTML(h,i);
+      list.innerHTML=positions.map(h=>{
         const value=h.shares*h.cur, cost=h.shares*h.buy, gain=value-cost;
         const pct=cost>0?gain/cost*100:0, up=gain>=0;
         return `<div class="lrow">
-          <div class="asset"><div class="tk" style="background:${color(i)}">${esc(h.ticker.slice(0,4))}</div>
-            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares${h.date?' &middot; '+fmtDate(h.date):''}</div></div></div>
+          <div class="asset"><div class="tk" style="background:${colorFor(h.ticker)}">${esc(h.ticker.slice(0,4))}</div>
+            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares</div></div></div>
           <div class="lc hide-m cell">$${fmt(h.buy)}</div>
           <div class="lc hide-m cell">$${fmt(h.cur)}</div>
           <div class="lc cell">$${fmt(value)}</div>
           <div class="lc pl ${up?'up':'down'}">${fmtSigned(gain)} (${up?'+':'\u2212'}${Math.abs(pct).toFixed(1)}%)</div>
-          <div class="row-actions">
-            <button class="ico-btn" onclick="startEdit(${i})" title="Edit">&#9998;</button>
-            <button class="ico-btn del" onclick="removeHolding(${i})" title="Remove">&times;</button>
-          </div>
         </div>`;
       }).join('');
     }
@@ -430,157 +465,77 @@
     const bg=document.getElementById('bigGain'); bg.textContent=fmtSigned(totalGain); bg.className='val '+(up?'up':'down');
     const bp=document.getElementById('bigGainPct'); bp.textContent=(up?'+':'\u2212')+Math.abs(totalPct).toFixed(2)+'%'; bp.className='val '+(up?'up':'down');
 
-    drawDonut(totalValue);
-    renderConcentrationWarning(totalValue);
+    drawDonut(positions, totalValue);
+    renderConcentrationWarning(positions, totalValue);
   }
 
-  // Renders a single holding row in EDIT mode (inline editing).
-  // Layout mirrors the 6-column grid of a normal row, but every cell is an input.
-  // Each input has a tiny label above it so it's clear which value is being edited.
-  // Shares sits in the first cell right after Name, as requested.
-  function editRowHTML(h,i){
-    return `<div class="lrow editing">
-      <!-- Cell 1: ticker, name, and shares grouped together -->
-      <div class="edit-asset">
-        <div class="edit-fld" style="width:34%"><span class="edit-lbl">Ticker</span>
-          <input class="edit-in" id="e_ticker_${i}" value="${esc(h.ticker)}" maxlength="6" placeholder="AAPL"></div>
-        <div class="edit-fld" style="width:38%"><span class="edit-lbl">Name</span>
-          <input class="edit-in" id="e_name_${i}" value="${esc(h.name||'')}" placeholder="Apple"></div>
-        <div class="edit-fld" style="width:28%"><span class="edit-lbl">Shares</span>
-          <input class="edit-in" id="e_shares_${i}" type="number" step="any" value="${h.shares}" placeholder="10"></div>
-      </div>
-      <!-- Cell 2: buy price (hidden on mobile) -->
-      <div class="lc hide-m edit-fld"><span class="edit-lbl">Buy price</span>
-        <input class="edit-in" id="e_buy_${i}" type="number" step="any" value="${h.buy}"></div>
-      <!-- Cell 3: current price (hidden on mobile) -->
-      <div class="lc hide-m edit-fld"><span class="edit-lbl">Current</span>
-        <input class="edit-in" id="e_cur_${i}" type="number" step="any" value="${h.cur}"></div>
-      <!-- Cell 4: buy date (replaces the old decorative spacer) -->
-      <div class="lc edit-fld"><span class="edit-lbl">Buy date</span>
-        <input class="edit-in" id="e_date_${i}" type="date" min="1980-01-01" max="${todayISO()}" value="${esc(h.date||'')}"></div>
-      <!-- Cell 5: empty (Gain/loss column) -->
-      <div class="lc"></div>
-      <!-- Cell 6: save / cancel buttons -->
-      <div class="row-actions">
-        <button class="ico-btn" onclick="saveEdit(${i})" title="Save" style="color:var(--up);border-color:var(--up)">&#10003;</button>
-        <button class="ico-btn" onclick="cancelEdit()" title="Cancel">&times;</button>
-      </div>
-    </div>`;
-  }
-
-  // Draws the composition donut as a single SVG circle per holding.
-  // Technique: each slice is a circle with a dashed stroke, where the dash
-  // length = that holding's share of the total. `offset` walks around the
-  // ring so slices sit next to each other instead of overlapping.
-  //   r  = ring radius, sw = stroke width, C = full circumference (2πr).
-  function drawDonut(total){
+  // --- Donut (now takes positions + colors by ticker) -------------------
+  function drawDonut(positions, total){
     const svg=document.getElementById('donut'), legend=document.getElementById('legend');
     const cx=75,cy=75,r=58,sw=18,C=2*Math.PI*r;
-    // Empty / zero-value state: draw a plain grey ring and a hint.
-    if(holdings.length===0||total<=0){
+    if(positions.length===0||total<=0){
       svg.innerHTML=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--card)" stroke-width="${sw}"/>`;
       legend.innerHTML='<div style="color:var(--text-faint);font-size:.82rem">Add holdings to see the split.</div>';
       return;
     }
     let offset=0, arcs='', leg='';
-    holdings.forEach((h,i)=>{
-      const v=h.shares*h.cur, frac=v/total, len=frac*C; // this slice's arc length
-      // dasharray "len rest" draws a line of `len`, then a gap for the rest.
-      // dashoffset shifts the start point so each slice begins where the last ended.
-      arcs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color(i)}" stroke-width="${sw}"
+    positions.forEach(h=>{
+      const v=h.shares*h.cur, frac=v/total, len=frac*C;
+      const c=colorFor(h.ticker);
+      arcs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c}" stroke-width="${sw}"
         stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-offset}"
         transform="rotate(-90 ${cx} ${cy})" style="transition:stroke-dasharray .4s"/>`;
       offset+=len;
-      leg+=`<div class="legend-item"><span class="legend-dot" style="background:${color(i)}"></span>
+      leg+=`<div class="legend-item"><span class="legend-dot" style="background:${c}"></span>
         <span class="legend-name">${esc(h.ticker)}</span><span class="legend-pct">${(frac*100).toFixed(1)}%</span></div>`;
     });
-    // Center text: number of assets.
-    arcs+=`<text x="${cx}" y="${cy-3}" text-anchor="middle" class="donut-center-val">${holdings.length}</text>
+    arcs+=`<text x="${cx}" y="${cy-3}" text-anchor="middle" class="donut-center-val">${positions.length}</text>
            <text x="${cx}" y="${cy+11}" text-anchor="middle" class="donut-center-lbl">assets</text>`;
     svg.innerHTML=arcs; legend.innerHTML=leg;
   }
 
-  // --- Actions that change the data (each saves, then re-renders) ---
-
-  // Reads the "Add a holding" form and validates the inputs.
-  // If the ticker already exists, it MERGES into that position using a
-  // weighted-average buy price (this is how a real "average cost" / DCA works):
-  //
-  //   new shares     = old shares + added shares
-  //   new avg buy    = (old shares*old buy + added shares*added buy) / new shares
-  //   current price  = the just-entered price (most recent known price)
-  //
-  // Otherwise it adds a brand-new row.
+  // --- Add a buy (appends a transaction; updates the ticker's price) ----
   function addHolding(){
     const ticker=val('inTicker').toUpperCase(), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
-    // Buy date: use what's entered, or default to today if left blank.
     const date=val('inDate')||todayISO();
-    // Require a ticker and three positive numbers, else warn and stop.
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
 
-    // Look for an existing holding with the same ticker (case-insensitive).
-    const existing=holdings.find(h=>h.ticker.toUpperCase()===ticker);
-    if(existing){
-      const totalShares=existing.shares+shares;
-      // Weighted-average buy price across the old and new lots.
-      existing.buy=(existing.shares*existing.buy + shares*buy)/totalShares;
-      existing.shares=totalShares;
-      existing.cur=cur;                 // refresh to the most recent price
-      if(name) existing.name=name;      // let a newly typed name update the label
-      // Merged position keeps the EARLIER buy date — that's when this position
-      // began, which is what a value-over-time chart should anchor on.
-      if(date && (!existing.date || date<existing.date)) existing.date=date;
-      // Brief confirmation so the merge isn't silently surprising.
-      alert(`Added ${shares} more share(s) to ${ticker}. Position now ${fmt(totalShares)} `
-        +`shares at an average buy price of $${fmt(existing.buy)}.`);
-    } else {
-      holdings.push({ticker,name,shares,buy,cur,date});
+    // Append the buy as its own transaction (always preserved individually).
+    transactions.push({id:newId(),ticker,name,shares,buy,date});
+    // Current price is a fact about the ticker today — refresh it in the map.
+    prices[ticker]=cur;
+
+    // If this ticker already had buys, let the user know it averaged in.
+    const sameTicker=transactions.filter(t=>t.ticker.toUpperCase()===ticker);
+    if(sameTicker.length>1){
+      const totSh=sameTicker.reduce((s,t)=>s+(+t.shares||0),0);
+      const avg=sameTicker.reduce((s,t)=>s+(+t.shares||0)*(+t.buy||0),0)/totSh;
+      alert(`Recorded ${shares} more share(s) of ${ticker}. Position now ${fmt(totSh)} `
+        +`shares at an average buy price of $${fmt(avg)}.`);
     }
 
-    saveHoldings();
+    saveData(transactions, prices);
     ['inTicker','inName','inShares','inBuy','inCur','inDate'].forEach(id=>document.getElementById(id).value='');
-    setDefaultDate();                   // reset the picker back to today
+    setDefaultDate();
     document.getElementById('inTicker').focus();
     render();
   }
-  // Puts row `i` into edit mode (cancels any other edit by overwriting editIndex).
-  function startEdit(i){editIndex=i;render();}
-  // Leaves edit mode without saving changes.
-  function cancelEdit(){editIndex=-1;render();}
-  // Reads the inline edit inputs for row `i`, validates, overwrites that holding.
-  function saveEdit(i){
-    const ticker=document.getElementById('e_ticker_'+i).value.trim().toUpperCase();
-    const name=document.getElementById('e_name_'+i).value.trim();
-    const shares=parseFloat(document.getElementById('e_shares_'+i).value);
-    const buy=parseFloat(document.getElementById('e_buy_'+i).value);
-    const cur=parseFloat(document.getElementById('e_cur_'+i).value);
-    const date=document.getElementById('e_date_'+i).value;   // may be '' if cleared
-    if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){alert('Each field needs a valid positive value.');return;}
-    holdings[i]={ticker,name,shares,buy,cur,date}; editIndex=-1; saveHoldings(); render();
-  }
-  // Deletes holding `i`. If it was being edited, leave edit mode first.
-  function removeHolding(i){if(editIndex===i)editIndex=-1;holdings.splice(i,1);saveHoldings();render();}
 
-  // --- Tiny input readers used by addHolding ---
-  const val=id=>document.getElementById(id).value.trim();   // trimmed text value
-  const num=id=>parseFloat(document.getElementById(id).value); // numeric value
-  // Pressing Enter in the last field (Current price) submits the form.
+  // --- Tiny input readers ---
+  const val=id=>document.getElementById(id).value.trim();
+  const num=id=>parseFloat(document.getElementById(id).value);
   document.getElementById('inCur').addEventListener('keydown',e=>{if(e.key==='Enter')addHolding();});
 
-  // Sets the add-form date picker to today's date (a sensible default that
-  // saves typing) and caps the selectable max at today, from the device clock.
-  // (The min is 1980-01-01, set in the HTML.) This blocks future-dated buys.
   function setDefaultDate(){
     const d=document.getElementById('inDate');
-    d.max=todayISO();        // device-clock-driven upper limit
+    d.max=todayISO();
     d.value=todayISO();
   }
   setDefaultDate();
 
-  // First paint when the page loads.
   render();
 </script>
 </body>

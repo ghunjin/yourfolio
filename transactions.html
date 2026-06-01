@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<!--
+  Yourfolio — transactions.html
+  The transaction log: every individual buy you've ever entered, newest first.
+  This is the SOURCE OF TRUTH. The tracker page (app.html) derives its summary
+  (positions, totals, donut) from this same list. Add/edit/delete of individual
+  buys happens HERE; the tracker page is now a read-only summary.
+
+  Shared data with app.html via localStorage:
+    yourfolio_transactions -> the array of transaction objects
+    yourfolio_prices       -> { TICKER: currentPrice } map
+  Both pages read/write the same keys, so they stay in sync.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yourfolio — Transactions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Spline+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c0d10;--bg-soft:#131419;--card:#16181f;--card-hover:#1b1e27;
+    --line:rgba(255,255,255,0.07);--text:#f4f5f7;--text-dim:#9aa0ad;--text-faint:#6b7180;
+    --accent:#5b7cff;--accent-soft:#7d96ff;--accent-glow:rgba(91,124,255,0.35);
+    --up:#36d399;--down:#ff6b7a;--radius:22px;--radius-sm:14px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:'Spline Sans',sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;min-height:100vh}
+  ::selection{background:var(--accent-glow);color:#fff}
+  .glow{position:fixed;top:-30%;left:50%;transform:translateX(-50%);width:900px;height:900px;background:radial-gradient(circle,var(--accent-glow) 0%,transparent 60%);filter:blur(40px);opacity:.4;pointer-events:none;z-index:0}
+  nav{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;padding:18px 6vw;z-index:100;backdrop-filter:blur(14px);background:rgba(12,13,16,0.82);border-bottom:1px solid var(--line)}
+  .brand{font-family:'Sora',sans-serif;font-weight:800;font-size:1.2rem;letter-spacing:-0.03em;display:flex;align-items:center;gap:9px;text-decoration:none;color:var(--text)}
+  .brand .dot{width:10px;height:10px;border-radius:3px;background:var(--accent);box-shadow:0 0 16px var(--accent-glow)}
+  .nav-right{display:flex;gap:22px;align-items:center}
+  .nav-link{color:var(--text-dim);text-decoration:none;font-size:.92rem;font-weight:500;transition:color .2s}
+  .nav-link:hover{color:var(--text)}
+  .nav-link.active{color:var(--text)}
+
+  .wrap{position:relative;z-index:1;max-width:920px;margin:0 auto;padding:48px 6vw 90px}
+  .page-tag{color:var(--accent-soft);font-weight:600;font-size:.9rem;letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px}
+  .page-title{font-family:'Sora';font-weight:700;font-size:clamp(2rem,5vw,2.9rem);letter-spacing:-0.035em;margin-bottom:8px}
+  .page-sub{color:var(--text-dim);margin-bottom:36px}
+
+  /* Summary strip: a few headline numbers about the whole log */
+  .summary-strip{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:32px}
+  .sum-card{background:linear-gradient(160deg,var(--bg-soft),var(--card));border:1px solid var(--line);border-radius:18px;padding:18px 22px;flex:1;min-width:140px;position:relative;overflow:hidden}
+  .sum-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)}
+  .sum-lbl{font-size:.74rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
+  .sum-val{font-family:'Sora';font-weight:700;font-size:1.5rem;letter-spacing:-0.02em;margin-top:4px}
+
+  /* Filter chips: tap a ticker to show only its buys (Toss-style pills) */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  .chip{background:var(--card);border:1px solid var(--line);color:var(--text-dim);font-family:inherit;font-size:.85rem;font-weight:600;padding:7px 15px;border-radius:100px;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
+  .chip:hover{color:var(--text);border-color:var(--accent)}
+  .chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  /* Each calendar group: a date header then the buys made that period */
+  .group-head{font-size:.78rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin:26px 0 10px 4px}
+  .group-head:first-of-type{margin-top:0}
+
+  /* A transaction row */
+  .tx-row{display:grid;grid-template-columns:auto 1.4fr 1fr 1fr 1fr auto;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:9px;animation:slideIn .3s ease}
+  @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .tk{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:.66rem;font-weight:700;color:#fff;flex-shrink:0}
+  .tx-asset{min-width:0}
+  .tx-asset .nm{font-size:.92rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx-asset .tkr{font-size:.74rem;color:var(--text-faint);font-weight:600}
+  .tx-cell{font-size:.88rem;font-variant-numeric:tabular-nums}
+  .tx-cell .cl{font-size:.68rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;display:block;margin-bottom:1px}
+  .tx-cost{font-weight:600;font-variant-numeric:tabular-nums;font-size:.92rem}
+  .tx-actions{display:flex;gap:6px;flex-shrink:0;justify-self:end}
+  .ico-btn{background:none;border:1px solid var(--line);color:var(--text-faint);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:.85rem;line-height:1;transition:color .2s,border-color .2s;display:flex;align-items:center;justify-content:center}
+  .ico-btn:hover{color:var(--text);border-color:var(--accent)}
+  .ico-btn.del:hover{color:var(--down);border-color:var(--down)}
+
+  /* edit mode inputs inside a row */
+  .tx-row.editing{grid-template-columns:1fr;background:var(--card-hover);border-color:var(--accent)}
+  .edit-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:100%}
+  .edit-fld{display:flex;flex-direction:column;gap:4px;min-width:0}
+  .edit-lbl{font-size:.64rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;padding-left:2px}
+  .edit-in{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;color:var(--text);font-family:inherit;font-size:.86rem;outline:none;width:100%;min-width:0}
+  .edit-in:focus{border-color:var(--accent)}
+  .edit-in[type=date]{color-scheme:dark;accent-color:var(--accent)}
+  .edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+  input[type=number]::-webkit-outer-spin-button,input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  input[type=number]{-moz-appearance:textfield;appearance:textfield}
+
+  .empty{text-align:center;color:var(--text-faint);padding:60px 0;font-size:.95rem}
+  .empty a{color:var(--accent-soft);text-decoration:none;font-weight:600}
+  .empty a:hover{text-decoration:underline}
+  .note{font-size:.8rem;color:var(--text-faint);margin-top:24px;text-align:center}
+
+  @media(max-width:760px){
+    /* On mobile, drop the per-share BUY PRICE column to save width. Visible
+       children are then: badge, asset, shares, cost, actions = 5 items, so the
+       grid needs 5 tracks. The badge is auto-width, asset flexes, shares/cost
+       are compact, and the final auto track holds the edit/delete buttons —
+       pinned hard-right so they sit at the end of the row, not the start. */
+    .tx-row:not(.editing){grid-template-columns:auto 1.3fr auto auto auto;gap:10px}
+    .tx-row:not(.editing) .tx-cell.hide-m{display:none}
+    .tx-row:not(.editing) .tx-actions{justify-self:end}
+    .edit-grid{grid-template-columns:1fr 1fr}
+    .summary-strip{gap:10px}
+    .sum-card{min-width:calc(50% - 5px)}
+  }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<nav>
+  <a href="index.html" class="brand"><span class="dot"></span>Yourfolio</a>
+  <div class="nav-right">
+    <a href="app.html" class="nav-link">Tracker</a>
+    <a href="transactions.html" class="nav-link active">Transactions</a>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="page-tag">Your activity</div>
+  <div class="page-title">Transaction log</div>
+  <div class="page-sub">Every buy you've recorded, newest first. Fix a mistake by editing or deleting any single entry.</div>
+
+  <div class="summary-strip" id="summaryStrip"></div>
+
+  <div class="filters" id="filters"></div>
+
+  <div id="logList"></div>
+
+  <div class="note">Your transactions are saved in this browser. Editing here updates your tracker automatically.</div>
+</div>
+
+<script>
+  /* ============================================================
+     YOURFOLIO — transaction log
+     ------------------------------------------------------------
+     Data model (the source of truth for the whole app):
+       transactions = [ { id, ticker, name, shares, buy, date }, ... ]
+         - id:     unique string so we can edit/delete a specific entry
+         - ticker: stock symbol, e.g. "AAPL"
+         - name:   display name (optional)
+         - shares: shares bought in THIS transaction
+         - buy:    price per share paid in THIS transaction
+         - date:   purchase date "YYYY-MM-DD"
+       prices = { TICKER: currentPricePerShare }
+         - current price is a fact about the ticker today, NOT about any
+           one purchase, so it lives separately (one value per ticker).
+
+     This page lets you add/edit/delete individual transactions. The tracker
+     page (app.html) reads the same two storage keys and DERIVES its summary
+     (positions, totals, donut) from this list — so the two always agree.
+     ============================================================ */
+
+  const PALETTE=[
+    '#5b7cff','#36d399','#a98cff','#ffb454','#ff6b9d','#4fd1c5','#f6c453','#7d96ff',
+    '#ff8c69','#6ee7b7','#c084fc','#fbbf24','#f472b6','#22d3ee','#a3e635','#fb7185'
+  ];
+
+  // Storage keys shared with app.html. (Old single-page key kept for migration.)
+  const TX_KEY='yourfolio_transactions';
+  const PRICE_KEY='yourfolio_prices';
+  const OLD_KEY='yourfolio_holdings';   // pre-refactor data lived here
+
+  // --- Formatting helpers (same as the tracker page) ---
+  const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function fmtDate(d){
+    if(!d) return '';
+    const dt=new Date(d+'T00:00:00');
+    if(isNaN(dt)) return '';
+    return dt.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+  }
+  function todayISO(){return new Date().toISOString().slice(0,10);}
+  // A simple unique id for a new transaction.
+  function newId(){return 'tx_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);}
+
+  // Stable color per ticker: hash the ticker string to an index so the SAME
+  // ticker always gets the SAME color on both pages (donut + badges + log).
+  function colorFor(ticker){
+    let h=0; const t=String(ticker).toUpperCase();
+    for(let i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))>>>0;
+    return PALETTE[h%PALETTE.length];
+  }
+
+  // --- Load + migrate ---------------------------------------------------
+  // If new-style transaction data exists, use it. Otherwise look for OLD
+  // single-page data (an array of positions) and convert each position into
+  // one "seed" transaction so existing users see no disruption.
+  function loadData(){
+    // 1) Try the new format first.
+    try{
+      const rawTx=localStorage.getItem(TX_KEY);
+      if(rawTx){
+        const tx=JSON.parse(rawTx);
+        if(Array.isArray(tx)){
+          let prices={};
+          try{const rp=localStorage.getItem(PRICE_KEY); if(rp){const p=JSON.parse(rp); if(p&&typeof p==='object') prices=p;}}catch(e){}
+          return {transactions:tx, prices};
+        }
+      }
+    }catch(e){}
+
+    // 2) No new data — try to migrate OLD position data.
+    try{
+      const rawOld=localStorage.getItem(OLD_KEY);
+      if(rawOld){
+        const old=JSON.parse(rawOld);
+        if(Array.isArray(old) && old.length){
+          const transactions=[], prices={};
+          old.forEach(h=>{
+            const tkr=String(h.ticker||'').toUpperCase();
+            if(!tkr) return;
+            transactions.push({
+              id:newId(), ticker:tkr, name:h.name||tkr,
+              shares:+h.shares||0, buy:+h.buy||0, date:h.date||''
+            });
+            if(h.cur!=null) prices[tkr]=+h.cur||0;   // pull current price into the map
+          });
+          // Persist the migrated form so this only happens once.
+          saveData(transactions, prices);
+          return {transactions, prices};
+        }
+      }
+    }catch(e){}
+
+    // 3) Nothing saved at all — start empty. (The tracker page seeds samples.)
+    return {transactions:[], prices:{}};
+  }
+  function saveData(tx, pr){
+    try{
+      localStorage.setItem(TX_KEY, JSON.stringify(tx));
+      localStorage.setItem(PRICE_KEY, JSON.stringify(pr));
+    }catch(e){/* storage blocked — still works in memory */}
+  }
+
+  let {transactions, prices} = loadData();
+  let editId=null;        // id of the transaction being edited (null = none)
+  let filterTicker=null;  // active filter chip (null = show all)
+
+  // --- Rendering --------------------------------------------------------
+
+  function render(){
+    renderSummary();
+    renderFilters();
+    renderLog();
+  }
+
+  // Headline numbers about the log itself.
+  function renderSummary(){
+    const strip=document.getElementById('summaryStrip');
+    const totalBuys=transactions.length;
+    const totalInvested=transactions.reduce((s,t)=>s+t.shares*t.buy,0);
+    const tickers=new Set(transactions.map(t=>t.ticker.toUpperCase())).size;
+    strip.innerHTML=`
+      <div class="sum-card"><div class="sum-lbl">Transactions</div><div class="sum-val">${totalBuys}</div></div>
+      <div class="sum-card"><div class="sum-lbl">Total invested</div><div class="sum-val">$${fmt(totalInvested)}</div></div>
+      <div class="sum-card"><div class="sum-lbl">Assets</div><div class="sum-val">${tickers}</div></div>`;
+  }
+
+  // One chip per distinct ticker, plus an "All" chip.
+  function renderFilters(){
+    const box=document.getElementById('filters');
+    const tickers=[...new Set(transactions.map(t=>t.ticker.toUpperCase()))].sort();
+    if(tickers.length===0){box.innerHTML='';return;}
+    let html=`<button class="chip ${filterTicker===null?'active':''}" onclick="setFilter(null)">All</button>`;
+    html+=tickers.map(t=>`<button class="chip ${filterTicker===t?'active':''}" onclick="setFilter('${esc(t)}')">${esc(t)}</button>`).join('');
+    box.innerHTML=html;
+  }
+
+  // The log itself, newest date first, grouped by month.
+  function renderLog(){
+    const list=document.getElementById('logList');
+    let rows=transactions.slice();
+    if(filterTicker) rows=rows.filter(t=>t.ticker.toUpperCase()===filterTicker);
+
+    if(rows.length===0){
+      list.innerHTML='<div class="empty">No transactions yet.<br>Add your first buy on the <a href="app.html">tracker page</a>.</div>';
+      return;
+    }
+
+    // Sort newest first. Entries with no date sort to the bottom.
+    rows.sort((a,b)=>{
+      if(!a.date && !b.date) return 0;
+      if(!a.date) return 1;
+      if(!b.date) return -1;
+      return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0);
+    });
+
+    // Group by "Month Year" header.
+    let html='', lastGroup=null;
+    rows.forEach(t=>{
+      if(t.id===editId){ html+=editRowHTML(t); return; }
+      const group = t.date ? new Date(t.date+'T00:00:00').toLocaleDateString('en-US',{year:'numeric',month:'long'}) : 'No date';
+      if(group!==lastGroup){ html+=`<div class="group-head">${group}</div>`; lastGroup=group; }
+      const cost=t.shares*t.buy;
+      const c=colorFor(t.ticker);
+      html+=`<div class="tx-row">
+        <div class="tk" style="background:${c}">${esc(t.ticker.slice(0,4))}</div>
+        <div class="tx-asset"><div class="nm">${esc(t.name||t.ticker)}</div><div class="tkr">${esc(t.ticker)} &middot; ${fmtDate(t.date)||'no date'}</div></div>
+        <div class="tx-cell"><span class="cl">Shares</span>${(+t.shares).toLocaleString()}</div>
+        <div class="tx-cell hide-m"><span class="cl">Buy price</span>$${fmt(t.buy)}</div>
+        <div class="tx-cell tx-cost"><span class="cl">Cost</span>$${fmt(cost)}</div>
+        <div class="tx-actions">
+          <button class="ico-btn" onclick="startEdit('${t.id}')" title="Edit">&#9998;</button>
+          <button class="ico-btn del" onclick="removeTx('${t.id}')" title="Delete">&times;</button>
+        </div>
+      </div>`;
+    });
+    list.innerHTML=html;
+  }
+
+  // A transaction row in edit mode.
+  function editRowHTML(t){
+    return `<div class="tx-row editing">
+      <div class="edit-grid">
+        <div class="edit-fld"><span class="edit-lbl">Ticker</span>
+          <input class="edit-in" id="e_ticker" value="${esc(t.ticker)}" maxlength="6"></div>
+        <div class="edit-fld"><span class="edit-lbl">Name</span>
+          <input class="edit-in" id="e_name" value="${esc(t.name||'')}" placeholder="Apple"></div>
+        <div class="edit-fld"><span class="edit-lbl">Shares</span>
+          <input class="edit-in" id="e_shares" type="number" step="any" value="${t.shares}"></div>
+        <div class="edit-fld"><span class="edit-lbl">Buy price</span>
+          <input class="edit-in" id="e_buy" type="number" step="any" value="${t.buy}"></div>
+        <div class="edit-fld"><span class="edit-lbl">Buy date</span>
+          <input class="edit-in" id="e_date" type="date" min="1980-01-01" max="${todayISO()}" value="${esc(t.date||'')}"></div>
+      </div>
+      <div class="edit-actions">
+        <button class="ico-btn" onclick="saveEdit('${t.id}')" title="Save" style="color:var(--up);border-color:var(--up)">&#10003;</button>
+        <button class="ico-btn" onclick="cancelEdit()" title="Cancel">&times;</button>
+      </div>
+    </div>`;
+  }
+
+  // --- Actions ----------------------------------------------------------
+  function setFilter(t){ filterTicker=t; render(); }
+  function startEdit(id){ editId=id; render(); }
+  function cancelEdit(){ editId=null; render(); }
+
+  function saveEdit(id){
+    const ticker=document.getElementById('e_ticker').value.trim().toUpperCase();
+    const name=document.getElementById('e_name').value.trim();
+    const shares=parseFloat(document.getElementById('e_shares').value);
+    const buy=parseFloat(document.getElementById('e_buy').value);
+    const date=document.getElementById('e_date').value;
+    if(!ticker||!(shares>0)||!(buy>0)){alert('Each transaction needs a ticker plus positive shares and buy price.');return;}
+    const idx=transactions.findIndex(t=>t.id===id);
+    if(idx<0) return;
+    transactions[idx]={...transactions[idx], ticker, name, shares, buy, date};
+    editId=null;
+    saveData(transactions, prices);
+    render();
+  }
+
+  function removeTx(id){
+    const t=transactions.find(x=>x.id===id);
+    if(!t) return;
+    if(!confirm(`Delete this ${esc(t.ticker)} buy of ${(+t.shares).toLocaleString()} share(s)? This can't be undone.`)) return;
+    if(editId===id) editId=null;
+    transactions=transactions.filter(x=>x.id!==id);
+    saveData(transactions, prices);
+    render();
+  }
+
+  render();
+</script>
+</body>
+</html>
