@@ -71,12 +71,13 @@
      currency to display totals in). The pressed one is filled with the accent. */
   .cur-toggle{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
   .cur-toggle button{background:none;border:none;color:var(--text-dim);font-family:inherit;
-    font-size:.92rem;font-weight:600;padding:8px 14px;cursor:pointer;transition:background .18s,color .18s;line-height:1}
+    font-size:.86rem;font-weight:600;padding:8px 0;cursor:pointer;transition:background .18s,color .18s;line-height:1;
+    width:64px;text-align:center}
   .cur-toggle button + button{border-left:1px solid var(--line)}
   .cur-toggle button.on{background:var(--accent);color:#fff}
   .cur-toggle button:not(.on):hover{color:var(--text)}
   /* smaller variant for the dashboard header */
-  .cur-toggle.sm button{padding:6px 11px;font-size:.85rem}
+  .cur-toggle.sm button{padding:6px 0;font-size:.85rem;width:40px}
 
   /* The dashboard currency switch sits in the panel's top-right corner. */
   .display-cur{position:absolute;top:22px;right:22px}
@@ -143,6 +144,14 @@
   .add-btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 22px;font-weight:600;font-family:inherit;font-size:.92rem;cursor:pointer;transition:transform .15s,box-shadow .2s;height:42px;white-space:nowrap}
   .add-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-glow)}
   .form-hint{font-size:.78rem;color:var(--text-faint);margin-top:14px}
+  /* Second add-form row: the "Priced in" toggle + exchange-rate box. */
+  .currency-row{margin-top:14px;grid-template-columns:max-content minmax(160px,260px);align-items:end}
+  /* Blocking error: stronger than the informational FX notice — shown when an
+     action was PREVENTED (e.g. missing exchange rate). Red-toned, brief. */
+  .form-error{display:flex;align-items:flex-start;gap:9px;background:rgba(255,107,122,0.1);
+    border:1px solid rgba(255,107,122,0.4);border-radius:var(--radius-sm);
+    padding:11px 14px;margin-top:14px;font-size:.86rem;color:#ffb3bb;animation:slideIn .3s ease}
+  .form-error::before{content:'\26A0';flex-shrink:0}
 
   /* BUGFIX: hide the little up/down spinner arrows on number inputs.
      In narrow boxes (like the Shares field) those arrows sit right under the
@@ -210,6 +219,9 @@
   @media(max-width:900px){
     .top-grid{grid-template-columns:1fr}
     .add-form{grid-template-columns:1fr 1fr}
+    /* Currency row on mobile: toggle on the left sized to its content, rate box
+       fills the rest — same height as every other field, not oversized. */
+    .currency-row{grid-template-columns:max-content 1fr;align-items:end}
     .add-btn{grid-column:1/-1}
     /* Display rows: hide buy/current to save space (still visible via edit). */
     .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1.2fr;gap:8px}
@@ -298,7 +310,7 @@
       <div class="fld"><label>Buy date</label><input id="inDate" type="date" min="1980-01-01"></div>
       <button class="add-btn" onclick="addHolding()">+ Add</button>
     </div>
-    <div class="add-form" style="margin-top:14px;grid-template-columns:max-content minmax(160px,1fr);align-items:end">
+    <div class="add-form currency-row">
       <div class="fld"><label>Priced in</label>
         <div class="cur-toggle" id="inputToggle">
           <button data-cur="USD" onclick="setInputCurrency('USD')">$ USD</button>
@@ -307,6 +319,7 @@
       </div>
       <div class="fld"><label>Exchange rate (KRW per $1)</label><input id="inRate" type="number" min="0" step="any" placeholder="1350"></div>
     </div>
+    <div id="formError" class="form-error" style="display:none"></div>
     <div class="form-hint">Pick the currency this asset is priced in. The exchange rate is used to show your whole portfolio in either currency &mdash; enter today's KRW-per-dollar rate. Current price is manual for now &mdash; a live feed is the next step.</div>
   </div>
 
@@ -680,29 +693,41 @@
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
 
-    // A ticker has ONE currency. If this ticker already exists, the new buy must
-    // use the existing currency (you can't own AAPL in both $ and ₩); otherwise
-    // use the currency picked on the toggle.
+    // A ticker has ONE currency. If this ticker already exists in a DIFFERENT
+    // currency than the one selected, block the add entirely — a US stock priced
+    // in won (or vice versa) isn't a real thing, and averaging unconverted
+    // amounts together corrupts the position. Tell the user and switch the input
+    // toggle to the existing currency so the fix is one click away.
     const priorSame=transactions.filter(t=>t.ticker.toUpperCase()===ticker);
     const existingCur = priorSame.length ? (priorSame[0].currency||'USD') : null;
-    const currency = existingCur || inputCurrency;
     if(existingCur && existingCur!==inputCurrency){
-      alert(`${ticker} is already recorded in ${existingCur}. Keeping ${existingCur} for this buy — a ticker can only use one currency.`);
+      showFormError(`${ticker} is already recorded in ${existingCur}. A ticker can only use one currency. Switch \u201CPriced in\u201D to ${existingCur} to add more ${ticker}. Nothing was added.`);
+      setInputCurrency(existingCur);   // flip the toggle to make the fix one click
+      return;   // <-- block: nothing is added
     }
+    const currency = existingCur || inputCurrency;
 
-    // If any KRW is involved (this asset, or you're viewing in KRW), we need a
-    // rate. Capture it from the form if provided; else fall back to the saved
-    // rate. Warn (don't block) if KRW is in play but no rate exists yet.
+    // Capture an entered rate up front (it's a standing value).
     if(rate>0){ fxRate=rate; saveRate(); }
-    const krwInvolved = currency==='KRW' || displayCurrency==='KRW' || transactions.some(t=>t.currency==='KRW');
-    if(krwInvolved && !(fxRate>0)){
-      alert('Heads up: enter today\u2019s KRW-per-dollar exchange rate so won and dollar values can be converted. Your holding was still saved.');
+
+    // A rate is REQUIRED if, once this asset is added, the portfolio would
+    // contain any holding whose currency differs from the display currency
+    // (i.e. a conversion would actually happen). If so and we have no rate,
+    // block the add and ask for it — don't silently save with a wrong 1:1 value.
+    const currenciesAfter = new Set(transactions.map(t=>t.currency||'USD'));
+    currenciesAfter.add(currency);
+    const needsConversion = [...currenciesAfter].some(c=>c!==displayCurrency);
+    if(needsConversion && !(fxRate>0)){
+      showFormError(`Enter today\u2019s exchange rate (KRW per $1) first. This holding is in ${currency} but you\u2019re viewing in ${displayCurrency}, so a rate is needed to convert it. Nothing was added yet.`);
+      const rf=document.getElementById('inRate'); rf.focus();
+      return;   // <-- block: the holding is NOT added
     }
 
     const prevShares=priorSame.reduce((s,t)=>s+(+t.shares||0),0);
     const prevAvg=prevShares>0?priorSame.reduce((s,t)=>s+(+t.shares||0)*(+t.buy||0),0)/prevShares:0;
     const hadPosition=priorSame.length>0;
     const prevPrice=prices[ticker];
+    clearFormError();   // checks passed — clear any prior blocking message
 
     // Append the buy as its own transaction (always preserved individually).
     transactions.push({id:newId(),ticker,name,shares,buy,date,currency});
@@ -767,7 +792,34 @@
 
   // --- Currency toggle handlers ---
   function setInputCurrency(c){ inputCurrency=c; syncToggle('inputToggle', c); }
-  function setDisplayCurrency(c){ displayCurrency=c; saveDisplayCurrency(); render(); }
+  function setDisplayCurrency(c){
+    // Pick up a rate freshly typed into the form field (toggling doesn't go
+    // through addHolding, so commit it here too).
+    const typed=parseFloat(document.getElementById('inRate').value);
+    if(typed>0){ fxRate=typed; saveRate(); }
+    // If switching to `c` would require converting any holding (some holding's
+    // currency isn't `c`) and we have no rate, block and ask for the rate.
+    const currencies=new Set(transactions.map(t=>t.currency||'USD'));
+    const wouldConvert=[...currencies].some(x=>x!==c);
+    if(wouldConvert && !(fxRate>0)){
+      showFormError(`Enter today\u2019s exchange rate (KRW per $1) before viewing in ${c}. Your holdings are in more than one currency, so a rate is needed to convert them.`);
+      document.getElementById('inRate').focus();
+      syncToggle('displayToggle', displayCurrency);  // keep the toggle on the current (unchanged) currency
+      return;   // <-- block: display currency does NOT switch
+    }
+    clearFormError();
+    displayCurrency=c; saveDisplayCurrency(); render();
+  }
+
+  // Show / hide the blocking form error (e.g. missing exchange rate).
+  function showFormError(msg){
+    const el=document.getElementById('formError');
+    el.textContent=msg; el.style.display='flex';
+  }
+  function clearFormError(){
+    const el=document.getElementById('formError');
+    el.style.display='none'; el.textContent='';
+  }
 
   function setDefaultDate(){
     const d=document.getElementById('inDate');
