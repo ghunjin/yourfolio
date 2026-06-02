@@ -73,6 +73,7 @@
   .cell{font-size:.9rem;font-variant-numeric:tabular-nums}
   .pl{font-weight:600;font-variant-numeric:tabular-nums}
   .pl.up{color:var(--up)} .pl.down{color:var(--down)}
+  .tri{font-size:.78em;display:inline-block;vertical-align:middle;position:relative;top:-0.05em}
   section.block{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:90px 7vw}
   .section-tag{color:var(--accent-soft);font-weight:600;font-size:.9rem;letter-spacing:.04em;text-transform:uppercase;margin-bottom:14px}
   .section-title{font-family:'Sora';font-weight:700;font-size:clamp(1.9rem,4vw,2.9rem);letter-spacing:-0.035em;line-height:1.1;margin-bottom:18px;max-width:640px}
@@ -141,7 +142,7 @@
           <div class="dash-top">
             <div><div class="dash-label">Total portfolio value</div><div class="dash-total"><span class="cur">$</span>48,920<span class="cur">.50</span></div></div>
           </div>
-          <div class="dash-gain" style="display:inline-block">&#9650; +$6,310 (+14.8%)</div>
+          <div class="dash-gain" style="display:inline-block"><span class="tri">&#9650;</span> +$6,310 (+14.8%)</div>
         </div>
         <div class="dash-donut">
           <svg width="110" height="110" viewBox="0 0 110 110" style="flex-shrink:0">
@@ -164,9 +165,9 @@
       </div>
       <div class="holdings">
         <div class="row head"><div class="cell">Asset</div><div class="cell">Avg buy</div><div class="cell">Current</div><div class="cell">Gain / loss</div></div>
-        <div class="row"><div class="asset"><div class="tk">AAPL</div><div><div class="nm">Apple</div><div class="sub">25 shares</div></div></div><div class="cell">$168.40</div><div class="cell">$201.20</div><div class="pl up">+$820 (+19.5%)</div></div>
-        <div class="row"><div class="asset"><div class="tk">NVDA</div><div><div class="nm">NVIDIA</div><div class="sub">12 shares</div></div></div><div class="cell">$92.10</div><div class="cell">$138.60</div><div class="pl up">+$558 (+50.5%)</div></div>
-        <div class="row"><div class="asset"><div class="tk">TSLA</div><div><div class="nm">Tesla</div><div class="sub">8 shares</div></div></div><div class="cell">$248.00</div><div class="cell">$215.30</div><div class="pl down">&minus;$261 (&minus;13.2%)</div></div>
+        <div class="row"><div class="asset"><div class="tk">AAPL</div><div><div class="nm">Apple</div><div class="sub">25 shares</div></div></div><div class="cell">$168.40</div><div class="cell">$201.20</div><div class="pl up"><span class="tri">&#9650;</span> +$820 (+19.5%)</div></div>
+        <div class="row"><div class="asset"><div class="tk">NVDA</div><div><div class="nm">NVIDIA</div><div class="sub">12 shares</div></div></div><div class="cell">$92.10</div><div class="cell">$138.60</div><div class="pl up"><span class="tri">&#9650;</span> +$558 (+50.5%)</div></div>
+        <div class="row"><div class="asset"><div class="tk">TSLA</div><div><div class="nm">Tesla</div><div class="sub">8 shares</div></div></div><div class="cell">$248.00</div><div class="cell">$215.30</div><div class="pl down"><span class="tri">&#9660;</span> &minus;$261 (&minus;13.2%)</div></div>
       </div>
     </div>
   </div>

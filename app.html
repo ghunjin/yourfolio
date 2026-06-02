@@ -49,6 +49,9 @@
   .gain-item .lbl{font-size:.75rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
   .gain-item .val{font-family:'Sora';font-weight:700;font-size:1.5rem;letter-spacing:-0.02em;margin-top:2px}
   .val.up{color:var(--up)} .val.down{color:var(--down)}
+  /* Gain/loss direction triangle: same glyph as everywhere, scaled down a touch
+     so it reads as a slim marker rather than a chunky block. */
+  .tri{font-size:.78em;display:inline-block;vertical-align:middle;position:relative;top:-0.05em}
 
   /* donut panel */
   .donut-panel{display:flex;flex-direction:column}
@@ -62,6 +65,30 @@
   .legend-dot{width:11px;height:11px;border-radius:3px;flex-shrink:0}
   .legend-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .legend-pct{color:var(--text-faint);margin-left:auto;font-variant-numeric:tabular-nums}
+
+  /* Currency toggle: two small pill buttons ($ / ₩). Used both on the add form
+     (which currency this asset is priced in) and in the dashboard (which
+     currency to display totals in). The pressed one is filled with the accent. */
+  .cur-toggle{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+  .cur-toggle button{background:none;border:none;color:var(--text-dim);font-family:inherit;
+    font-size:.92rem;font-weight:600;padding:8px 14px;cursor:pointer;transition:background .18s,color .18s;line-height:1}
+  .cur-toggle button + button{border-left:1px solid var(--line)}
+  .cur-toggle button.on{background:var(--accent);color:#fff}
+  .cur-toggle button:not(.on):hover{color:var(--text)}
+  /* smaller variant for the dashboard header */
+  .cur-toggle.sm button{padding:6px 11px;font-size:.85rem}
+
+  /* The dashboard currency switch sits in the panel's top-right corner. */
+  .display-cur{position:absolute;top:22px;right:22px}
+
+  /* FX-approximation notice: calm/informational (blue-grey), NOT an alarm.
+     Shown only while the display currency differs from some holding's native
+     currency, because then the converted cost basis is approximate. */
+  .fx-note{display:flex;align-items:flex-start;gap:9px;background:rgba(125,150,255,0.08);
+    border:1px solid rgba(125,150,255,0.22);border-radius:var(--radius-sm);
+    padding:11px 14px;margin-bottom:24px;font-size:.85rem;color:#aeb9e6;animation:slideIn .35s ease}
+  .fx-note .fx-ico{flex-shrink:0;opacity:.85}
+  .fx-note b{color:#cdd6f7;font-weight:600}
 
   /* form */
   .form-panel{margin-bottom:24px}
@@ -157,6 +184,29 @@
   .empty{text-align:center;color:var(--text-faint);padding:48px 0;font-size:.95rem}
   .note{font-size:.8rem;color:var(--text-faint);margin-top:20px;text-align:center}
 
+  /* Toast: a subtle confirmation card that slides up from the bottom-right when
+     you add to an existing position. Replaces the old browser alert() with
+     something that matches the app's calm, refined look. It animates in, holds,
+     then fades out on its own (the JS removes it). Accent bar on the left edge
+     ties it to the brand color. */
+  .toast-wrap{position:fixed;bottom:24px;right:24px;z-index:2000;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+  .toast{pointer-events:auto;background:linear-gradient(160deg,var(--bg-soft),var(--card));
+    border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:16px;
+    padding:18px 24px 18px 22px;min-width:300px;max-width:400px;
+    box-shadow:0 18px 50px rgba(0,0,0,0.45);
+    animation:toastIn .38s cubic-bezier(.16,1,.3,1) forwards}
+  .toast.out{animation:toastOut .34s ease forwards}
+  @keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+  @keyframes toastOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(8px) scale(.98)}}
+  .toast-title{font-family:'Sora';font-weight:600;font-size:1.02rem;margin-bottom:7px;display:flex;align-items:center;gap:8px}
+  .toast-title .tk{width:27px;height:27px;border-radius:8px;font-size:.64rem}
+  .toast-line{font-size:.9rem;color:var(--text-dim);line-height:1.55}
+  .toast-line .chg{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+  @media(max-width:640px){
+    .toast-wrap{left:16px;right:16px;bottom:16px}
+    .toast{max-width:none;min-width:0}
+  }
+
   @media(max-width:900px){
     .top-grid{grid-template-columns:1fr}
     .add-form{grid-template-columns:1fr 1fr}
@@ -180,6 +230,7 @@
 </head>
 <body>
 <div class="glow"></div>
+<div class="toast-wrap" id="toastWrap"></div>
 <nav>
   <a href="index.html" class="brand"><span class="dot"></span>Yourfolio</a>
   <div style="display:flex;gap:22px;align-items:center">
@@ -194,10 +245,16 @@
   <div class="page-sub">Add what you own and see your real return, instantly.</div>
 
   <div class="top-grid">
-    <div class="panel">
+    <div class="panel" style="position:relative">
+      <div class="display-cur">
+        <div class="cur-toggle sm" id="displayToggle">
+          <button data-cur="USD" onclick="setDisplayCurrency('USD')">$</button>
+          <button data-cur="KRW" onclick="setDisplayCurrency('KRW')">&#8361;</button>
+        </div>
+      </div>
       <div class="dash-label">Total portfolio value</div>
-      <div class="total-val"><span class="cur">$</span><span id="totalVal">0.00</span></div>
-      <div class="invested-line">Invested: $<span id="investedVal">0.00</span></div>
+      <div class="total-val"><span class="cur" id="totalCurSym">$</span><span id="totalVal">0.00</span></div>
+      <div class="invested-line">Invested: <span id="investedCurSym">$</span><span id="investedVal">0.00</span></div>
       <div class="gain-block">
         <div class="gain-item">
           <div class="lbl">Total gain / loss</div>
@@ -223,6 +280,13 @@
        shows it when any single holding exceeds the threshold. -->
   <div id="concentrationWarning" class="warn-banner" style="display:none"></div>
 
+  <!-- FX-approximation notice. Hidden unless the display currency differs from
+       some holding's native currency (then converted cost basis is approximate). -->
+  <div id="fxNote" class="fx-note" style="display:none">
+    <span class="fx-ico">&#8505;</span>
+    <span><b>Showing converted values.</b> Holdings bought in another currency are converted at your entered rate. Because exchange rates change over time, the converted <b>buy price</b> (and therefore gain/loss) is approximate.</span>
+  </div>
+
   <div class="panel form-panel">
     <div class="form-head">Add a holding</div>
     <div class="add-form">
@@ -234,7 +298,16 @@
       <div class="fld"><label>Buy date</label><input id="inDate" type="date" min="1980-01-01"></div>
       <button class="add-btn" onclick="addHolding()">+ Add</button>
     </div>
-    <div class="form-hint">Adding a buy records it in your transaction log. Buy the same ticker again and it averages in automatically. Current price is manual for now &mdash; a live feed is the next step.</div>
+    <div class="add-form" style="margin-top:14px;grid-template-columns:max-content minmax(160px,1fr);align-items:end">
+      <div class="fld"><label>Priced in</label>
+        <div class="cur-toggle" id="inputToggle">
+          <button data-cur="USD" onclick="setInputCurrency('USD')">$ USD</button>
+          <button data-cur="KRW" onclick="setInputCurrency('KRW')">&#8361; KRW</button>
+        </div>
+      </div>
+      <div class="fld"><label>Exchange rate (KRW per $1)</label><input id="inRate" type="number" min="0" step="any" placeholder="1350"></div>
+    </div>
+    <div class="form-hint">Pick the currency this asset is priced in. The exchange rate is used to show your whole portfolio in either currency &mdash; enter today's KRW-per-dollar rate. Current price is manual for now &mdash; a live feed is the next step.</div>
   </div>
 
   <div class="lrow head">
@@ -280,6 +353,21 @@
   const TX_KEY='yourfolio_transactions';
   const PRICE_KEY='yourfolio_prices';
   const OLD_KEY='yourfolio_holdings';
+  const RATE_KEY='yourfolio_fxrate';        // KRW per 1 USD
+  const DISPLAY_KEY='yourfolio_displaycur'; // 'USD' | 'KRW'
+
+  // Currency symbols for display.
+  const CUR_SYM={USD:'$', KRW:'\u20A9'};
+
+  // Convert an amount from one currency to another using `rate` (KRW per $1).
+  // Same currency -> unchanged. USD->KRW multiplies; KRW->USD divides.
+  function convert(amount, from, to, rate){
+    if(from===to) return amount;
+    if(!(rate>0)) return amount;            // no usable rate -> leave as-is
+    if(from==='USD' && to==='KRW') return amount*rate;
+    if(from==='KRW' && to==='USD') return amount/rate;
+    return amount;
+  }
 
   // --- Load + migrate ---------------------------------------------------
   // Priority: (1) existing transaction data, (2) migrate old position data,
@@ -309,7 +397,7 @@
             if(!tkr) return;
             transactions.push({
               id:newId(), ticker:tkr, name:h.name||tkr,
-              shares:+h.shares||0, buy:+h.buy||0, date:h.date||''
+              shares:+h.shares||0, buy:+h.buy||0, date:h.date||'', currency:'USD'
             });
             if(h.cur!=null) prices[tkr]=+h.cur||0;
           });
@@ -329,8 +417,23 @@
     }catch(e){/* storage blocked — still works in memory */}
   }
 
+  // Load the saved exchange rate (KRW per $1) and display currency.
+  function loadRate(){
+    try{const r=parseFloat(localStorage.getItem(RATE_KEY)); if(r>0) return r;}catch(e){}
+    return 0;   // 0 = not set yet
+  }
+  function loadDisplayCurrency(){
+    try{const c=localStorage.getItem(DISPLAY_KEY); if(c==='USD'||c==='KRW') return c;}catch(e){}
+    return 'USD';   // default display currency
+  }
+  function saveRate(){ try{localStorage.setItem(RATE_KEY,String(fxRate));}catch(e){} }
+  function saveDisplayCurrency(){ try{localStorage.setItem(DISPLAY_KEY,displayCurrency);}catch(e){} }
+
   // Live state.
   let {transactions, prices} = loadData();
+  let fxRate=loadRate();                    // KRW per 1 USD (0 if unset)
+  let displayCurrency=loadDisplayCurrency();// which currency totals show in
+  let inputCurrency='USD';                  // which currency the add form is in
 
   // --- Derive positions from transactions -------------------------------
   // Groups transactions by ticker and produces the position objects the rest
@@ -342,12 +445,13 @@
       const key=String(tx.ticker||'').toUpperCase();
       if(!key) return;
       if(!byTicker[key]){
-        byTicker[key]={ticker:key,name:tx.name||key,shares:0,costSum:0,earliest:tx.date||'',latest:tx.date||''};
+        byTicker[key]={ticker:key,name:tx.name||key,shares:0,costSum:0,earliest:tx.date||'',latest:tx.date||'',currency:tx.currency||'USD'};
       }
       const p=byTicker[key];
       p.shares+=(+tx.shares||0);
       p.costSum+=(+tx.shares||0)*(+tx.buy||0);
       if(tx.name) p.name=tx.name;
+      if(tx.currency) p.currency=tx.currency;   // native currency of this ticker
       if(tx.date){
         if(!p.earliest || tx.date<p.earliest) p.earliest=tx.date;
         if(!p.latest   || tx.date>p.latest)   p.latest=tx.date;
@@ -360,13 +464,21 @@
       buy:p.shares>0?p.costSum/p.shares:0,
       cur:+prices[p.ticker]||0,
       date:p.earliest,
-      lastDate:p.latest
+      lastDate:p.latest,
+      currency:p.currency||'USD'
     }));
   }
 
-  // --- Small formatting helpers (unchanged) ---
+  // --- Small formatting helpers ---
   const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const fmtSigned=n=>(n>=0?'+':'\u2212')+'$'+fmt(Math.abs(n));
+  // Directional marker so gain/loss isn't conveyed by color ALONE (accessibility:
+  // red-green color blindness). ▲ up, ▼ down, wrapped in a .tri span so CSS can
+  // scale it down to a slim marker. Returns HTML — use with innerHTML, not text.
+  const arrow=up=>`<span class="tri">${up?'\u25B2':'\u25BC'}</span>`;
+  // Signed money in a given currency symbol, e.g. "+$1,234.56" or "+₩1,234.56".
+  const fmtSigned=(n,sym='$')=>(n>=0?'+':'\u2212')+sym+fmt(Math.abs(n));
+  // Plain money with a currency symbol.
+  const fmtMoney=(n,sym='$')=>sym+fmt(n);
   const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   function fmtDate(d){
     if(!d) return '';
@@ -379,13 +491,35 @@
 
   // Stable color per ticker (matches transactions.html so colors agree across
   // pages). Hashes the ticker string to a palette index.
-  function colorFor(ticker){
-    let h=0; const t=String(ticker).toUpperCase();
-    for(let i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))>>>0;
-    return PALETTE[h%PALETTE.length];
+  // Color assignment: stateless and consistent. We sort the full set of
+  // tickers alphabetically and assign palette colors by position in that sorted
+  // list (1st ticker -> color 0, 2nd -> color 1, ...). Because the sort is the
+  // same everywhere, the SAME ticker gets the SAME color on every page and in
+  // every chart, with no saved state to keep in sync. Distinct colors are
+  // guaranteed up to PALETTE.length holdings; beyond that it wraps.
+  // Trade-off: adding/removing a holding can shift others' colors (positions
+  // change). That's an accepted cost for zero persistence and no cross-page
+  // sync. `allTickers` is the full set the ticker should be ranked within.
+  function colorFor(ticker, allTickers){
+    const sorted=[...new Set(allTickers.map(t=>String(t).toUpperCase()))].sort();
+    const idx=sorted.indexOf(String(ticker).toUpperCase());
+    return PALETTE[(idx<0?0:idx)%PALETTE.length];
   }
 
-  const CONCENTRATION_LIMIT=40;
+  // Concentration threshold scales with how many holdings you have, because
+  // a big share of a small portfolio is just what a small portfolio looks like,
+  // while a big share of a larger one is a real concentration bet. Returns the
+  // % threshold to warn at, or null to mean "don't warn at this holding count".
+  //   < 3 holdings  -> no warning (you're likely still building the portfolio)
+  //   = 3 holdings  -> warn at 70%+
+  //   = 4 holdings  -> warn at 50%+
+  //   > 4 holdings  -> warn at 40%+
+  function concentrationThreshold(count){
+    if(count<3) return null;
+    if(count===3) return 70;
+    if(count===4) return 50;
+    return 40;
+  }
 
   // Exemption hook for later (diversified ETFs shouldn't trip the warning).
   function isExemptFromConcentration(h){ return h.isDiversified===true; }
@@ -406,12 +540,17 @@
   function dismissWarning(ticker){ sessionDismissed.add(ticker); render(); }
   function muteWarning(ticker){ mutedTickers.add(ticker); saveMuted(); render(); }
 
-  function renderConcentrationWarning(positions, totalValue){
+  // `valueOf` maps a holding to its CURRENT value already converted into the
+  // display currency, so cross-currency holdings compare correctly.
+  function renderConcentrationWarning(positions, totalValue, valueOf){
     const banner=document.getElementById('concentrationWarning');
     if(totalValue<=0){banner.style.display='none';return;}
+    // Threshold depends on how many holdings there are; null = don't warn.
+    const limit=concentrationThreshold(positions.length);
+    if(limit===null){banner.style.display='none';return;}
     const flagged=positions
-      .map(h=>({h,share:(h.shares*h.cur)/totalValue*100}))
-      .filter(x=>x.share>CONCENTRATION_LIMIT
+      .map(h=>({h,share:valueOf(h)/totalValue*100}))
+      .filter(x=>x.share>=limit
         && !isExemptFromConcentration(x.h)
         && !sessionDismissed.has(x.h.ticker)
         && !mutedTickers.has(x.h.ticker));
@@ -421,8 +560,7 @@
       return `<div class="warn-row">
         <span class="warn-ico">&#9888;</span>
         <span class="warn-text"><b>${t}</b> makes up ${x.share.toFixed(0)}% of your portfolio
-          &mdash; more than ${CONCENTRATION_LIMIT}%. A position this large means your returns
-          ride heavily on one bet.</span>
+          &mdash; a position this large means your returns ride heavily on one bet.</span>
         <span class="warn-actions">
           <button class="warn-mute" onclick="muteWarning('${t}')">Don't remind me again</button>
           <button class="warn-x" onclick="dismissWarning('${t}')" title="Dismiss for now">&times;</button>
@@ -435,40 +573,79 @@
   // --- Render (summary table is read-only now) --------------------------
   function render(){
     const positions=derivePositions();
+    const allTickers=positions.map(p=>p.ticker);   // full set, for color ranking
     const list=document.getElementById('holdingsList');
+    const dc=displayCurrency, sym=CUR_SYM[dc];
+
+    // Each holding's value/cost/gain expressed in the DISPLAY currency, so
+    // everything (totals, table, donut, concentration) is comparable.
+    const dispValue=h=>convert(h.shares*h.cur, h.currency, dc, fxRate);
+    const dispCost =h=>convert(h.shares*h.buy, h.currency, dc, fxRate);
+
     let totalValue=0,totalInvested=0;
-    positions.forEach(h=>{totalValue+=h.shares*h.cur;totalInvested+=h.shares*h.buy;});
+    positions.forEach(h=>{ totalValue+=dispValue(h); totalInvested+=dispCost(h); });
 
     if(positions.length===0){
       list.innerHTML='<div class="empty">No holdings yet. Add one above to see your return.</div>';
     } else {
-      list.innerHTML=positions.map(h=>{
-        const value=h.shares*h.cur, cost=h.shares*h.buy, gain=value-cost;
+      // Display order: biggest gain first, measured in the display currency.
+      const ordered=[...positions].sort((a,b)=>(dispValue(b)-dispCost(b))-(dispValue(a)-dispCost(a)));
+      list.innerHTML=ordered.map(h=>{
+        // Every column shows in the DISPLAY currency so each row is internally
+        // consistent and legible (no mixing $ and ₩ across one row). Per-share
+        // buy/current are converted at the current rate too — meaning in a
+        // converted view they're "what this would be in the display currency
+        // today", not the literal price paid. The FX notice flags this.
+        const buyD=convert(h.buy, h.currency, dc, fxRate);
+        const curD=convert(h.cur, h.currency, dc, fxRate);
+        const value=dispValue(h), cost=dispCost(h), gain=value-cost;
         const pct=cost>0?gain/cost*100:0, up=gain>=0;
         return `<div class="lrow">
-          <div class="asset"><div class="tk" style="background:${colorFor(h.ticker)}">${esc(h.ticker.slice(0,4))}</div>
-            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares</div></div></div>
-          <div class="lc hide-m cell">$${fmt(h.buy)}</div>
-          <div class="lc hide-m cell">$${fmt(h.cur)}</div>
-          <div class="lc cell">$${fmt(value)}</div>
-          <div class="lc pl ${up?'up':'down'}">${fmtSigned(gain)} (${up?'+':'\u2212'}${Math.abs(pct).toFixed(1)}%)</div>
+          <div class="asset"><div class="tk" style="background:${colorFor(h.ticker, allTickers)}">${esc(h.ticker.slice(0,4))}</div>
+            <div><div class="nm">${esc(h.name||h.ticker)}</div><div class="sub">${(+h.shares).toLocaleString()} shares${h.currency!==dc?' &middot; '+h.currency:''}</div></div></div>
+          <div class="lc hide-m cell">${sym}${fmt(buyD)}</div>
+          <div class="lc hide-m cell">${sym}${fmt(curD)}</div>
+          <div class="lc cell">${sym}${fmt(value)}</div>
+          <div class="lc pl ${up?'up':'down'}">${arrow(up)} ${fmtSigned(gain,sym)} (${up?'+':'\u2212'}${Math.abs(pct).toFixed(1)}%)</div>
         </div>`;
       }).join('');
     }
 
     const totalGain=totalValue-totalInvested;
     const totalPct=totalInvested>0?totalGain/totalInvested*100:0, up=totalGain>=0;
+    document.getElementById('totalCurSym').textContent=sym;
+    document.getElementById('investedCurSym').textContent=sym;
     document.getElementById('totalVal').textContent=fmt(totalValue);
     document.getElementById('investedVal').textContent=fmt(totalInvested);
-    const bg=document.getElementById('bigGain'); bg.textContent=fmtSigned(totalGain); bg.className='val '+(up?'up':'down');
-    const bp=document.getElementById('bigGainPct'); bp.textContent=(up?'+':'\u2212')+Math.abs(totalPct).toFixed(2)+'%'; bp.className='val '+(up?'up':'down');
+    const bg=document.getElementById('bigGain'); bg.innerHTML=arrow(up)+' '+fmtSigned(totalGain,sym); bg.className='val '+(up?'up':'down');
+    const bp=document.getElementById('bigGainPct'); bp.innerHTML=arrow(up)+' '+(up?'+':'\u2212')+Math.abs(totalPct).toFixed(2)+'%'; bp.className='val '+(up?'up':'down');
 
-    drawDonut(positions, totalValue);
-    renderConcentrationWarning(positions, totalValue);
+    // Toggle button pressed-states.
+    syncToggle('displayToggle', displayCurrency);
+    syncToggle('inputToggle', inputCurrency);
+
+    drawDonut(positions, dispValue, totalValue);
+    renderConcentrationWarning(positions, totalValue, dispValue);
+    renderFxNote(positions);
   }
 
-  // --- Donut (now takes positions + colors by ticker) -------------------
-  function drawDonut(positions, total){
+  // Reflect the active value on a currency toggle's two buttons.
+  function syncToggle(id, active){
+    const box=document.getElementById(id); if(!box) return;
+    box.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.cur===active));
+  }
+
+  // Show the FX-approximation note only when the display currency differs from
+  // at least one holding's native currency (then converted cost basis is fuzzy).
+  function renderFxNote(positions){
+    const note=document.getElementById('fxNote');
+    const mixed=positions.some(h=>h.currency!==displayCurrency);
+    note.style.display = mixed ? 'flex' : 'none';
+  }
+
+  // --- Donut (slices sized by display-currency value) -------------------
+  // `valueOf(h)` returns a holding's current value already in display currency.
+  function drawDonut(positions, valueOf, total){
     const svg=document.getElementById('donut'), legend=document.getElementById('legend');
     const cx=75,cy=75,r=58,sw=18,C=2*Math.PI*r;
     if(positions.length===0||total<=0){
@@ -477,9 +654,10 @@
       return;
     }
     let offset=0, arcs='', leg='';
+    const allTickers=positions.map(p=>p.ticker);
     positions.forEach(h=>{
-      const v=h.shares*h.cur, frac=v/total, len=frac*C;
-      const c=colorFor(h.ticker);
+      const v=valueOf(h), frac=v/total, len=frac*C;
+      const c=colorFor(h.ticker, allTickers);
       arcs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${c}" stroke-width="${sw}"
         stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-offset}"
         transform="rotate(-90 ${cx} ${cy})" style="transition:stroke-dasharray .4s"/>`;
@@ -497,26 +675,55 @@
     const ticker=val('inTicker').toUpperCase(), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
     const date=val('inDate')||todayISO();
+    const rate=num('inRate');
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
 
+    // A ticker has ONE currency. If this ticker already exists, the new buy must
+    // use the existing currency (you can't own AAPL in both $ and ₩); otherwise
+    // use the currency picked on the toggle.
+    const priorSame=transactions.filter(t=>t.ticker.toUpperCase()===ticker);
+    const existingCur = priorSame.length ? (priorSame[0].currency||'USD') : null;
+    const currency = existingCur || inputCurrency;
+    if(existingCur && existingCur!==inputCurrency){
+      alert(`${ticker} is already recorded in ${existingCur}. Keeping ${existingCur} for this buy — a ticker can only use one currency.`);
+    }
+
+    // If any KRW is involved (this asset, or you're viewing in KRW), we need a
+    // rate. Capture it from the form if provided; else fall back to the saved
+    // rate. Warn (don't block) if KRW is in play but no rate exists yet.
+    if(rate>0){ fxRate=rate; saveRate(); }
+    const krwInvolved = currency==='KRW' || displayCurrency==='KRW' || transactions.some(t=>t.currency==='KRW');
+    if(krwInvolved && !(fxRate>0)){
+      alert('Heads up: enter today\u2019s KRW-per-dollar exchange rate so won and dollar values can be converted. Your holding was still saved.');
+    }
+
+    const prevShares=priorSame.reduce((s,t)=>s+(+t.shares||0),0);
+    const prevAvg=prevShares>0?priorSame.reduce((s,t)=>s+(+t.shares||0)*(+t.buy||0),0)/prevShares:0;
+    const hadPosition=priorSame.length>0;
+    const prevPrice=prices[ticker];
+
     // Append the buy as its own transaction (always preserved individually).
-    transactions.push({id:newId(),ticker,name,shares,buy,date});
+    transactions.push({id:newId(),ticker,name,shares,buy,date,currency});
     // Current price is a fact about the ticker today — refresh it in the map.
     prices[ticker]=cur;
 
-    // If this ticker already had buys, let the user know it averaged in.
-    const sameTicker=transactions.filter(t=>t.ticker.toUpperCase()===ticker);
-    if(sameTicker.length>1){
-      const totSh=sameTicker.reduce((s,t)=>s+(+t.shares||0),0);
-      const avg=sameTicker.reduce((s,t)=>s+(+t.shares||0)*(+t.buy||0),0)/totSh;
-      alert(`Recorded ${shares} more share(s) of ${ticker}. Position now ${fmt(totSh)} `
-        +`shares at an average buy price of $${fmt(avg)}.`);
+    // If this ticker already had buys, show a subtle toast describing the merge.
+    if(hadPosition){
+      const totSh=prevShares+shares;
+      const newAvg=(prevShares*prevAvg + shares*buy)/totSh;
+      const priceChanged = prevPrice!=null && Math.abs(prevPrice-cur)>1e-9;
+      showMergeToast(ticker, allTickersNow(), {
+        prevShares, totSh, prevAvg, newAvg,
+        priceChanged, prevPrice, newPrice:cur, currency
+      });
     }
 
     saveData(transactions, prices);
     ['inTicker','inName','inShares','inBuy','inCur','inDate'].forEach(id=>document.getElementById(id).value='');
+    // Keep the rate field populated (it's a standing value, not per-asset).
+    if(fxRate>0) document.getElementById('inRate').value=fxRate;
     setDefaultDate();
     document.getElementById('inTicker').focus();
     render();
@@ -527,12 +734,52 @@
   const num=id=>parseFloat(document.getElementById(id).value);
   document.getElementById('inCur').addEventListener('keydown',e=>{if(e.key==='Enter')addHolding();});
 
+  // Distinct tickers currently held — used to color the toast badge to match
+  // the same ticker's color everywhere else.
+  function allTickersNow(){ return derivePositions().map(p=>p.ticker); }
+
+  // Builds and shows a subtle toast describing a merge: shares before -> after,
+  // average buy before -> after, and (if changed) the current-price update that
+  // now applies to the whole position. Auto-dismisses after a few seconds.
+  function showMergeToast(ticker, allTickers, d){
+    const wrap=document.getElementById('toastWrap');
+    if(!wrap) return;
+    const c=colorFor(ticker, allTickers);
+    const t=esc(ticker);
+    const sym=CUR_SYM[d.currency||'USD'];
+    const priceLine = d.priceChanged
+      ? `<div class="toast-line">Current price updated to <span class="chg">${sym}${fmt(d.newPrice)}</span> <span style="color:var(--text-faint)">(was ${sym}${fmt(d.prevPrice)})</span></div>`
+      : '';
+    const el=document.createElement('div');
+    el.className='toast';
+    el.innerHTML=`
+      <div class="toast-title"><span class="tk" style="background:${c};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700">${esc(ticker.slice(0,4))}</span>Added to ${t}</div>
+      <div class="toast-line">Shares <span class="chg">${(+d.prevShares).toLocaleString()} &rarr; ${fmt(d.totSh)}</span></div>
+      <div class="toast-line">Avg buy <span class="chg">${sym}${fmt(d.prevAvg)} &rarr; ${sym}${fmt(d.newAvg)}</span></div>
+      ${priceLine}`;
+    wrap.appendChild(el);
+    // Auto-dismiss: fade out, then remove from the DOM.
+    setTimeout(()=>{
+      el.classList.add('out');
+      el.addEventListener('animationend',()=>el.remove(),{once:true});
+    }, 7000);
+  }
+
+  // --- Currency toggle handlers ---
+  function setInputCurrency(c){ inputCurrency=c; syncToggle('inputToggle', c); }
+  function setDisplayCurrency(c){ displayCurrency=c; saveDisplayCurrency(); render(); }
+
   function setDefaultDate(){
     const d=document.getElementById('inDate');
     d.max=todayISO();
     d.value=todayISO();
   }
   setDefaultDate();
+
+  // Initialize the rate field and both toggles from saved state.
+  if(fxRate>0) document.getElementById('inRate').value=fxRate;
+  syncToggle('inputToggle', inputCurrency);
+  syncToggle('displayToggle', displayCurrency);
 
   render();
 </script>

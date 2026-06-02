@@ -166,6 +166,9 @@
   // --- Formatting helpers (same as the tracker page) ---
   const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  // Each transaction shows in its OWN currency (a log shows what really happened).
+  const CUR_SYM={USD:'$', KRW:'\u20A9'};
+  const symOf=t=>CUR_SYM[(t&&t.currency)||'USD'];
   function fmtDate(d){
     if(!d) return '';
     const dt=new Date(d+'T00:00:00');
@@ -178,10 +181,14 @@
 
   // Stable color per ticker: hash the ticker string to an index so the SAME
   // ticker always gets the SAME color on both pages (donut + badges + log).
-  function colorFor(ticker){
-    let h=0; const t=String(ticker).toUpperCase();
-    for(let i=0;i<t.length;i++) h=(h*31+t.charCodeAt(i))>>>0;
-    return PALETTE[h%PALETTE.length];
+  // Color assignment: stateless and consistent with the tracker page. Sort the
+  // full set of tickers alphabetically and assign palette colors by position in
+  // that sorted list. Same sort everywhere => same ticker, same color on every
+  // page, with no saved state. Distinct up to PALETTE.length, then wraps.
+  function colorFor(ticker, allTickers){
+    const sorted=[...new Set(allTickers.map(t=>String(t).toUpperCase()))].sort();
+    const idx=sorted.indexOf(String(ticker).toUpperCase());
+    return PALETTE[(idx<0?0:idx)%PALETTE.length];
   }
 
   // --- Load + migrate ---------------------------------------------------
@@ -251,11 +258,17 @@
   function renderSummary(){
     const strip=document.getElementById('summaryStrip');
     const totalBuys=transactions.length;
-    const totalInvested=transactions.reduce((s,t)=>s+t.shares*t.buy,0);
     const tickers=new Set(transactions.map(t=>t.ticker.toUpperCase())).size;
+    // Invested is summed PER CURRENCY (you can't add won to dollars). Show each
+    // currency that's present on its own line.
+    const byCur={};
+    transactions.forEach(t=>{const c=t.currency||'USD'; byCur[c]=(byCur[c]||0)+t.shares*t.buy;});
+    const investedStr=Object.keys(byCur).length
+      ? Object.entries(byCur).map(([c,v])=>`${CUR_SYM[c]||''}${fmt(v)}`).join('<br>')
+      : '$0.00';
     strip.innerHTML=`
       <div class="sum-card"><div class="sum-lbl">Transactions</div><div class="sum-val">${totalBuys}</div></div>
-      <div class="sum-card"><div class="sum-lbl">Total invested</div><div class="sum-val">$${fmt(totalInvested)}</div></div>
+      <div class="sum-card"><div class="sum-lbl">Total invested</div><div class="sum-val" style="font-size:${Object.keys(byCur).length>1?'1.15rem':'1.5rem'}">${investedStr}</div></div>
       <div class="sum-card"><div class="sum-lbl">Assets</div><div class="sum-val">${tickers}</div></div>`;
   }
 
@@ -288,20 +301,24 @@
       return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0);
     });
 
-    // Group by "Month Year" header.
+    // Group by "Month Year" header. Color is ranked over the FULL set of
+    // tickers (all transactions, not just the filtered rows) so that filtering
+    // to one ticker doesn't change its color.
+    const allTickers=transactions.map(t=>t.ticker);
     let html='', lastGroup=null;
     rows.forEach(t=>{
       if(t.id===editId){ html+=editRowHTML(t); return; }
       const group = t.date ? new Date(t.date+'T00:00:00').toLocaleDateString('en-US',{year:'numeric',month:'long'}) : 'No date';
       if(group!==lastGroup){ html+=`<div class="group-head">${group}</div>`; lastGroup=group; }
       const cost=t.shares*t.buy;
-      const c=colorFor(t.ticker);
+      const c=colorFor(t.ticker, allTickers);
+      const sym=symOf(t);
       html+=`<div class="tx-row">
         <div class="tk" style="background:${c}">${esc(t.ticker.slice(0,4))}</div>
-        <div class="tx-asset"><div class="nm">${esc(t.name||t.ticker)}</div><div class="tkr">${esc(t.ticker)} &middot; ${fmtDate(t.date)||'no date'}</div></div>
+        <div class="tx-asset"><div class="nm">${esc(t.name||t.ticker)}</div><div class="tkr">${esc(t.ticker)} &middot; ${fmtDate(t.date)||'no date'}${t.currency==='KRW'?' &middot; KRW':''}</div></div>
         <div class="tx-cell"><span class="cl">Shares</span>${(+t.shares).toLocaleString()}</div>
-        <div class="tx-cell hide-m"><span class="cl">Buy price</span>$${fmt(t.buy)}</div>
-        <div class="tx-cell tx-cost"><span class="cl">Cost</span>$${fmt(cost)}</div>
+        <div class="tx-cell hide-m"><span class="cl">Buy price</span>${sym}${fmt(t.buy)}</div>
+        <div class="tx-cell tx-cost"><span class="cl">Cost</span>${sym}${fmt(cost)}</div>
         <div class="tx-actions">
           <button class="ico-btn" onclick="startEdit('${t.id}')" title="Edit">&#9998;</button>
           <button class="ico-btn del" onclick="removeTx('${t.id}')" title="Delete">&times;</button>
