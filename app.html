@@ -122,8 +122,7 @@
      Note: Safari does not render a separate, stylable calendar icon the way
      Chromium does — so custom icon styling only affects Chromium browsers.
      We keep it simple/visible rather than chasing a look Safari won't honor. */
-  .fld input[type=date],
-  .edit-in[type=date]{color-scheme:dark;accent-color:var(--accent)}
+  .fld input[type=date]{color-scheme:dark;accent-color:var(--accent)}
   /* Native date inputs render slightly TALLER than text inputs (the calendar
      widget has its own intrinsic height), so they stand out — most visibly on
      mobile. Pin them to the same box height and stop the inner edit area from
@@ -131,11 +130,9 @@
   .fld input[type=date]{height:40px;-webkit-appearance:none;appearance:none}
   .fld input[type=date]::-webkit-date-and-time-value{margin:0;text-align:left}
   .fld input[type=date]::-webkit-datetime-edit{padding:0;line-height:normal}
-  .fld input[type=date]::-webkit-calendar-picker-indicator,
-  .edit-in[type=date]::-webkit-calendar-picker-indicator{
+  .fld input[type=date]::-webkit-calendar-picker-indicator{
     cursor:pointer;opacity:.7;transition:opacity .2s}
-  .fld input[type=date]::-webkit-calendar-picker-indicator:hover,
-  .edit-in[type=date]::-webkit-calendar-picker-indicator:hover{opacity:1}
+  .fld input[type=date]::-webkit-calendar-picker-indicator:hover{opacity:1}
   .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
   .fld label{font-size:.72rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em}
   .fld input{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px;color:var(--text);font-family:inherit;font-size:.92rem;outline:none;transition:border-color .2s;min-width:0;width:100%}
@@ -173,22 +170,6 @@
   .cell{font-size:.9rem;font-variant-numeric:tabular-nums}
   .pl{font-weight:600;font-variant-numeric:tabular-nums;font-size:.9rem}
   .pl.up{color:var(--up)} .pl.down{color:var(--down)}
-  .row-actions{display:flex;gap:6px}
-  .ico-btn{background:none;border:1px solid var(--line);color:var(--text-faint);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:.85rem;line-height:1;transition:color .2s,border-color .2s;display:flex;align-items:center;justify-content:center}
-  .ico-btn:hover{color:var(--text);border-color:var(--accent)}
-  .ico-btn.del:hover{color:var(--down);border-color:var(--down)}
-
-  /* edit mode inputs inside a row */
-  /* When editing, the row keeps the same column grid but cells align to the top
-     so the little labels line up neatly above each input. */
-  .lrow.editing{grid-template-columns:1.5fr 1fr 1fr 1fr 1.2fr auto;background:var(--card-hover);border-color:var(--accent);align-items:start}
-  .edit-in{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-family:inherit;font-size:.85rem;outline:none;width:100%;min-width:0}
-  .edit-in:focus{border-color:var(--accent)}
-  /* edit-asset groups Ticker + Name + Shares side by side in the first cell */
-  .edit-asset{display:flex;gap:6px}
-  /* a single labelled input: tiny label stacked above the box */
-  .edit-fld{display:flex;flex-direction:column;gap:3px;min-width:0}
-  .edit-lbl{font-size:.6rem;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;padding-left:2px}
 
   .empty{text-align:center;color:var(--text-faint);padding:48px 0;font-size:.95rem}
   .note{font-size:.8rem;color:var(--text-faint);margin-top:20px;text-align:center}
@@ -223,19 +204,11 @@
        fills the rest — same height as every other field, not oversized. */
     .currency-row{grid-template-columns:max-content 1fr;align-items:end}
     .add-btn{grid-column:1/-1}
-    /* Display rows: hide buy/current to save space (still visible via edit). */
-    .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1.2fr;gap:8px}
-    .lrow:not(.editing) .lc.hide-m{display:none}
+    /* Display rows: hide buy/current to save space (full detail lives on the
+       transactions page, where individual buys are edited). */
+    .lrow{grid-template-columns:1.4fr 1fr 1.2fr;gap:8px}
+    .lrow .lc.hide-m{display:none}
     .lrow.head .lc.hide-m{display:none}
-    /* EDIT rows: must show everything (you can't edit a hidden field), so they
-       switch to a wrapping flex layout where every labelled input is reachable
-       and the save/cancel buttons sit at the end. */
-    .lrow.editing{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
-    .lrow.editing .lc.hide-m{display:block}   /* un-hide buy & current */
-    .lrow.editing .edit-asset{flex:1 1 100%}  /* ticker+name+shares on their own row */
-    .lrow.editing .lc.edit-fld{flex:1 1 110px} /* buy / current / date share a row */
-    .lrow.editing .lc:empty{display:none}      /* drop the empty gain/loss cell */
-    .lrow.editing .row-actions{margin-left:auto} /* push buttons to the far right */
     .panel{padding:22px}
   }
 </style>
@@ -490,9 +463,11 @@
   const arrow=up=>`<span class="tri">${up?'\u25B2':'\u25BC'}</span>`;
   // Signed money in a given currency symbol, e.g. "+$1,234.56" or "+₩1,234.56".
   const fmtSigned=(n,sym='$')=>(n>=0?'+':'\u2212')+sym+fmt(Math.abs(n));
-  // Plain money with a currency symbol.
-  const fmtMoney=(n,sym='$')=>sym+fmt(n);
-  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // Tickers may only contain characters real tickers use. Sanitizing at the
+  // input boundary (rather than only escaping at output) means a malformed
+  // ticker can never enter the data at all.
+  const cleanTicker=s=>String(s).toUpperCase().replace(/[^A-Z0-9.\-]/g,'').slice(0,6);
   function fmtDate(d){
     if(!d) return '';
     const dt=new Date(d+'T00:00:00');
@@ -685,12 +660,12 @@
 
   // --- Add a buy (appends a transaction; updates the ticker's price) ----
   function addHolding(){
-    const ticker=val('inTicker').toUpperCase(), name=val('inName');
+    const ticker=cleanTicker(val('inTicker')), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
     const date=val('inDate')||todayISO();
     const rate=num('inRate');
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
-      alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
+      showFormError('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
 
     // A ticker has ONE currency. If this ticker already exists in a DIFFERENT
