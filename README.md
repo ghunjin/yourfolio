@@ -4,7 +4,7 @@
 
 Yourfolio lets you record every stock purchase you make — across both US and Korean markets — and see your real gain or loss per position and across the whole portfolio, with allocation, concentration risk, and currency conversion handled in one clean view.
 
-🔗 **[Live demo](https://YOUR-USERNAME.github.io/YOUR-REPO/)** · Built with vanilla HTML, CSS, and JavaScript. No frameworks, no build step, no dependencies.
+🔗 **[Live demo](https://ghunjin.github.io/yourfolio/)** · Built with vanilla HTML, CSS, and JavaScript. No frameworks, no build step, no dependencies.
 
 > **Note on the demo:** the landing page shows a sample portfolio so you can see the tool in context. The tracker itself starts empty — add a holding to see it work. Your data is saved locally in your own browser and is never sent anywhere.
 
