@@ -165,9 +165,7 @@
 
   // --- Formatting helpers (same as the tracker page) ---
   const fmt=n=>n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  // Tickers may only contain characters real tickers use (sanitize at input).
-  const cleanTicker=s=>String(s).toUpperCase().replace(/[^A-Z0-9.\-]/g,'').slice(0,6);
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   // Each transaction shows in its OWN currency (a log shows what really happened).
   const CUR_SYM={USD:'$', KRW:'\u20A9'};
   const symOf=t=>CUR_SYM[(t&&t.currency)||'USD'];
@@ -358,7 +356,7 @@
   function cancelEdit(){ editId=null; render(); }
 
   function saveEdit(id){
-    const ticker=cleanTicker(document.getElementById('e_ticker').value);
+    const ticker=document.getElementById('e_ticker').value.trim().toUpperCase();
     const name=document.getElementById('e_name').value.trim();
     const shares=parseFloat(document.getElementById('e_shares').value);
     const buy=parseFloat(document.getElementById('e_buy').value);
@@ -366,27 +364,7 @@
     if(!ticker||!(shares>0)||!(buy>0)){alert('Each transaction needs a ticker plus positive shares and buy price.');return;}
     const idx=transactions.findIndex(t=>t.id===id);
     if(idx<0) return;
-    const oldTicker=transactions[idx].ticker.toUpperCase();
-    const myCur=transactions[idx].currency||'USD';
-    // BLOCK renaming this transaction onto a ticker held in a DIFFERENT
-    // currency — same rule as the tracker page. Otherwise raw amounts in one
-    // currency get averaged into a position priced in another.
-    const target=transactions.find(t=>t.id!==id && t.ticker.toUpperCase()===ticker);
-    if(target && (target.currency||'USD')!==myCur){
-      alert(`${ticker} is already recorded in ${target.currency||'USD'}, but this transaction is in ${myCur}. A ticker can only use one currency, so this edit was not saved.`);
-      return;
-    }
     transactions[idx]={...transactions[idx], ticker, name, shares, buy, date};
-    // Keep the prices map consistent across a rename: if the old ticker no
-    // longer has any transactions, move its current price to the new ticker
-    // (when the new one lacks a price) and drop the orphaned entry.
-    if(ticker!==oldTicker){
-      const oldStillUsed=transactions.some(t=>t.ticker.toUpperCase()===oldTicker);
-      if(!oldStillUsed && prices[oldTicker]!=null){
-        if(prices[ticker]==null) prices[ticker]=prices[oldTicker];
-        delete prices[oldTicker];
-      }
-    }
     editId=null;
     saveData(transactions, prices);
     render();
@@ -395,15 +373,9 @@
   function removeTx(id){
     const t=transactions.find(x=>x.id===id);
     if(!t) return;
-    // Native confirm() shows raw text (it doesn't render HTML), so use the
-    // ticker as-is — HTML-escaping here would display literal "&amp;" etc.
-    if(!confirm(`Delete this ${t.ticker} buy of ${(+t.shares).toLocaleString()} share(s)? This can't be undone.`)) return;
+    if(!confirm(`Delete this ${esc(t.ticker)} buy of ${(+t.shares).toLocaleString()} share(s)? This can't be undone.`)) return;
     if(editId===id) editId=null;
     transactions=transactions.filter(x=>x.id!==id);
-    // If that was the ticker's last transaction, drop its now-orphaned price
-    // (a stale price could silently mis-value a future re-add of the ticker).
-    const tkr=t.ticker.toUpperCase();
-    if(!transactions.some(x=>x.ticker.toUpperCase()===tkr)) delete prices[tkr];
     saveData(transactions, prices);
     render();
   }
