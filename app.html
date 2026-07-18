@@ -144,8 +144,10 @@
   .add-btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:0 22px;font-weight:600;font-family:inherit;font-size:.92rem;cursor:pointer;transition:transform .15s,box-shadow .2s;height:42px;white-space:nowrap}
   .add-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px var(--accent-glow)}
   .form-hint{font-size:.78rem;color:var(--text-faint);margin-top:14px}
-  /* Second add-form row: the "Priced in" toggle + exchange-rate box. */
-  .currency-row{margin-top:14px;grid-template-columns:max-content minmax(160px,260px);align-items:end}
+  /* Second add-form row: just the "Priced in" toggle now — the exchange rate
+     is fully automatic and surfaces via a toast on currency switch plus the
+     FX info banner (no standing form field). */
+  .currency-row{margin-top:14px;grid-template-columns:max-content;align-items:end}
   /* Blocking error: stronger than the informational FX notice — shown when an
      action was PREVENTED (e.g. missing exchange rate). Red-toned, brief. */
   .form-error{display:flex;align-items:flex-start;gap:9px;background:rgba(255,107,122,0.1);
@@ -219,9 +221,8 @@
   @media(max-width:900px){
     .top-grid{grid-template-columns:1fr}
     .add-form{grid-template-columns:1fr 1fr}
-    /* Currency row on mobile: toggle on the left sized to its content, rate box
-       fills the rest — same height as every other field, not oversized. */
-    .currency-row{grid-template-columns:max-content 1fr;align-items:end}
+    /* Currency row on mobile: just the toggle, sized to its content. */
+    .currency-row{grid-template-columns:max-content;align-items:end}
     .add-btn{grid-column:1/-1}
     /* Display rows: hide buy/current to save space (still visible via edit). */
     .lrow:not(.editing){grid-template-columns:1.4fr 1fr 1.2fr;gap:8px}
@@ -293,10 +294,11 @@
   <div id="concentrationWarning" class="warn-banner" style="display:none"></div>
 
   <!-- FX-approximation notice. Hidden unless the display currency differs from
-       some holding's native currency (then converted cost basis is approximate). -->
+       some holding's native currency (then converted cost basis is approximate).
+       renderFxNote() fills #fxNoteRate with the actual rate in use. -->
   <div id="fxNote" class="fx-note" style="display:none">
     <span class="fx-ico">&#8505;</span>
-    <span><b>Showing converted values.</b> Holdings bought in another currency are converted at your entered rate. Because exchange rates change over time, the converted <b>buy price</b> (and therefore gain/loss) is approximate.</span>
+    <span><b>Showing converted values</b><span id="fxNoteRate"></span>. Because exchange rates change over time, the converted <b>buy price</b> (and therefore gain/loss) is approximate.</span>
   </div>
 
   <div class="panel form-panel">
@@ -317,10 +319,9 @@
           <button data-cur="KRW" onclick="setInputCurrency('KRW')">&#8361; KRW</button>
         </div>
       </div>
-      <div class="fld"><label>Exchange rate (KRW per $1)</label><input id="inRate" type="number" min="0" step="any" placeholder="1350"></div>
     </div>
     <div id="formError" class="form-error" style="display:none"></div>
-    <div class="form-hint">Pick the currency this asset is priced in. The exchange rate is used to show your whole portfolio in either currency &mdash; enter today's KRW-per-dollar rate. Current price is manual for now &mdash; a live feed is the next step.</div>
+    <div class="form-hint">Pick the currency this asset is priced in &mdash; conversion between $ and &#8361; happens automatically at the official daily rate. Current price is manual for now &mdash; a live feed is the next step.</div>
   </div>
 
   <div class="lrow head">
@@ -367,6 +368,7 @@
   const PRICE_KEY='yourfolio_prices';
   const OLD_KEY='yourfolio_holdings';
   const RATE_KEY='yourfolio_fxrate';        // KRW per 1 USD
+  const RATE_DATE_KEY='yourfolio_fxrate_date'; // date that rate was published
   const DISPLAY_KEY='yourfolio_displaycur'; // 'USD' | 'KRW'
 
   // Currency symbols for display.
@@ -430,21 +432,33 @@
     }catch(e){/* storage blocked — still works in memory */}
   }
 
-  // Load the saved exchange rate (KRW per $1) and display currency.
+  // Load the saved exchange rate (KRW per $1), its date, and display currency.
+  // The rate is CACHED so the app still converts while offline — the source
+  // line then shows how old the cached rate is.
   function loadRate(){
     try{const r=parseFloat(localStorage.getItem(RATE_KEY)); if(r>0) return r;}catch(e){}
-    return 0;   // 0 = not set yet
+    return 0;   // 0 = never fetched yet
+  }
+  function loadRateDate(){
+    try{const d=localStorage.getItem(RATE_DATE_KEY); if(d) return d;}catch(e){}
+    return '';
   }
   function loadDisplayCurrency(){
     try{const c=localStorage.getItem(DISPLAY_KEY); if(c==='USD'||c==='KRW') return c;}catch(e){}
     return 'USD';   // default display currency
   }
-  function saveRate(){ try{localStorage.setItem(RATE_KEY,String(fxRate));}catch(e){} }
+  function saveRate(){
+    try{
+      localStorage.setItem(RATE_KEY,String(fxRate));
+      localStorage.setItem(RATE_DATE_KEY,fxRateDate||'');
+    }catch(e){}
+  }
   function saveDisplayCurrency(){ try{localStorage.setItem(DISPLAY_KEY,displayCurrency);}catch(e){} }
 
   // Live state.
   let {transactions, prices} = loadData();
-  let fxRate=loadRate();                    // KRW per 1 USD (0 if unset)
+  let fxRate=loadRate();                    // KRW per 1 USD (0 if never fetched)
+  let fxRateDate=loadRateDate();            // date the cached rate is from
   let displayCurrency=loadDisplayCurrency();// which currency totals show in
   let inputCurrency='USD';                  // which currency the add form is in
 
@@ -650,9 +664,18 @@
 
   // Show the FX-approximation note only when the display currency differs from
   // at least one holding's native currency (then converted cost basis is fuzzy).
+  // Since the manual rate field is gone, this banner is the one PERSISTENT
+  // place showing which rate the conversion is using (the toggle toast is
+  // ephemeral). Includes the rate's date so freshness is honest.
   function renderFxNote(positions){
     const note=document.getElementById('fxNote');
     const mixed=positions.some(h=>h.currency!==displayCurrency);
+    const rateSpan=document.getElementById('fxNoteRate');
+    if(rateSpan){
+      rateSpan.textContent = (mixed && fxRate>0)
+        ? ' at \u20A9'+fmt(fxRate)+' per $1 (ECB'+(fxRateDate?', '+fxRateDate:'')+')'
+        : '';
+    }
     note.style.display = mixed ? 'flex' : 'none';
   }
 
@@ -688,7 +711,6 @@
     const ticker=val('inTicker').toUpperCase(), name=val('inName');
     const shares=num('inShares'), buy=num('inBuy'), cur=num('inCur');
     const date=val('inDate')||todayISO();
-    const rate=num('inRate');
     if(!ticker||!(shares>0)||!(buy>0)||!(cur>0)){
       alert('Please enter a ticker plus positive numbers for shares, buy price, and current price.');return;
     }
@@ -707,19 +729,17 @@
     }
     const currency = existingCur || inputCurrency;
 
-    // Capture an entered rate up front (it's a standing value).
-    if(rate>0){ fxRate=rate; saveRate(); }
-
     // A rate is REQUIRED if, once this asset is added, the portfolio would
     // contain any holding whose currency differs from the display currency
-    // (i.e. a conversion would actually happen). If so and we have no rate,
-    // block the add and ask for it — don't silently save with a wrong 1:1 value.
+    // (i.e. a conversion would actually happen). The rate now comes from the
+    // API (with the last fetched value cached for offline use) — so this only
+    // fails on a FIRST-EVER visit with no connection. Block rather than
+    // silently save with a wrong 1:1 conversion.
     const currenciesAfter = new Set(transactions.map(t=>t.currency||'USD'));
     currenciesAfter.add(currency);
     const needsConversion = [...currenciesAfter].some(c=>c!==displayCurrency);
     if(needsConversion && !(fxRate>0)){
-      showFormError(`Enter today\u2019s exchange rate (KRW per $1) first. This holding is in ${currency} but you\u2019re viewing in ${displayCurrency}, so a rate is needed to convert it. Nothing was added yet.`);
-      const rf=document.getElementById('inRate'); rf.focus();
+      showFormError(`Today\u2019s exchange rate couldn\u2019t be fetched, and no earlier rate is saved. This holding is in ${currency} but you\u2019re viewing in ${displayCurrency}, so a rate is needed to convert it. Check your connection and reload. Nothing was added yet.`);
       return;   // <-- block: the holding is NOT added
     }
 
@@ -747,8 +767,6 @@
 
     saveData(transactions, prices);
     ['inTicker','inName','inShares','inBuy','inCur','inDate'].forEach(id=>document.getElementById(id).value='');
-    // Keep the rate field populated (it's a standing value, not per-asset).
-    if(fxRate>0) document.getElementById('inRate').value=fxRate;
     setDefaultDate();
     document.getElementById('inTicker').focus();
     render();
@@ -793,22 +811,23 @@
   // --- Currency toggle handlers ---
   function setInputCurrency(c){ inputCurrency=c; syncToggle('inputToggle', c); }
   function setDisplayCurrency(c){
-    // Pick up a rate freshly typed into the form field (toggling doesn't go
-    // through addHolding, so commit it here too).
-    const typed=parseFloat(document.getElementById('inRate').value);
-    if(typed>0){ fxRate=typed; saveRate(); }
     // If switching to `c` would require converting any holding (some holding's
-    // currency isn't `c`) and we have no rate, block and ask for the rate.
+    // currency isn't `c`) and no rate has ever been fetched, block. The rate
+    // comes from the API now, so this only happens on a first-ever visit
+    // while offline.
     const currencies=new Set(transactions.map(t=>t.currency||'USD'));
     const wouldConvert=[...currencies].some(x=>x!==c);
     if(wouldConvert && !(fxRate>0)){
-      showFormError(`Enter today\u2019s exchange rate (KRW per $1) before viewing in ${c}. Your holdings are in more than one currency, so a rate is needed to convert them.`);
-      document.getElementById('inRate').focus();
+      showFormError(`Today\u2019s exchange rate couldn\u2019t be fetched, and no earlier rate is saved. Your holdings are in more than one currency, so a rate is needed to view them in ${c}. Check your connection and reload.`);
       syncToggle('displayToggle', displayCurrency);  // keep the toggle on the current (unchanged) currency
       return;   // <-- block: display currency does NOT switch
     }
     clearFormError();
     displayCurrency=c; saveDisplayCurrency(); render();
+    // The rate popup: only when the new view actually CONVERTS something
+    // (some holding's native currency differs from the new display currency).
+    // A pure-USD portfolio toggling to USD shows nothing — no rate in play.
+    if(wouldConvert) showRateToast();
   }
 
   // Show / hide the blocking form error (e.g. missing exchange rate).
@@ -828,12 +847,75 @@
   }
   setDefaultDate();
 
-  // Initialize the rate field and both toggles from saved state.
-  if(fxRate>0) document.getElementById('inRate').value=fxRate;
+  // Tracks whether the live-rate fetch has finished and whether it succeeded
+  // (used to word the rate toast honestly: fresh vs cached-offline rate).
+  const rateFetchState={done:false, ok:false};
+
+  // Initialize both toggles from saved state.
   syncToggle('inputToggle', inputCurrency);
   syncToggle('displayToggle', displayCurrency);
 
   render();
+
+  // --- Live exchange rate (Frankfurter) ---------------------------------
+  // Frankfurter serves the European Central Bank's daily USD->KRW reference
+  // rate. No API key, no rate limit, CORS allowed — so a static site can call
+  // it directly from the browser. Design decisions:
+  //   - The rate is fully automatic: no manual entry and no standing form
+  //     field. It surfaces in two places instead: a TOAST when the user
+  //     switches to a display currency that requires conversion (ephemeral),
+  //     and the FX info banner while converted values are shown (persistent).
+  //   - The last fetched rate is CACHED (localStorage) so the app still
+  //     converts offline; the toast then says the rate's date, so its age
+  //     is honest.
+  //   - ECB rates are END-OF-DAY, published once per business day (~16:00
+  //     CET). On weekends/holidays you get the last business day's rate.
+  //   - Only a FIRST-EVER visit with no connection has no rate at all; in that
+  //     case cross-currency adds/views are blocked with a clear message
+  //     (never a silent wrong 1:1 conversion).
+
+  // A small toast showing the conversion rate in use. Reuses the same toast
+  // system as the merge notification so the two feel like one design language.
+  function showRateToast(){
+    const wrap=document.getElementById('toastWrap');
+    if(!wrap || !(fxRate>0)) return;
+    const srcLine = (rateFetchState.done && !rateFetchState.ok)
+      ? 'Last fetched rate'+(fxRateDate?' from '+fxRateDate:'')+' (offline)'
+      : 'Official ECB rate'+(fxRateDate?' \u00B7 '+fxRateDate:'');
+    const el=document.createElement('div');
+    el.className='toast';
+    el.innerHTML=`
+      <div class="toast-title">Today's exchange rate</div>
+      <div class="toast-line">Converting at <span class="chg">\u20A9${fmt(fxRate)} per $1</span></div>
+      <div class="toast-line" style="color:var(--text-faint);font-size:.8rem">${srcLine}</div>`;
+    wrap.appendChild(el);
+    setTimeout(()=>{
+      el.classList.add('out');
+      el.addEventListener('animationend',()=>el.remove(),{once:true});
+    }, 6000);
+  }
+
+  async function fetchLiveRate(){
+    try{
+      // NOTE: use the CURRENT domain (api.frankfurter.dev/v1) directly. The
+      // old api.frankfurter.app address 301-redirects here, and browsers
+      // reject cross-origin fetches through that redirect (CORS), which
+      // showed up as "unavailable" even with a working connection.
+      const res=await fetch('https://api.frankfurter.dev/v1/latest?from=USD&to=KRW');
+      if(!res.ok) throw new Error('bad status');
+      const data=await res.json();
+      const r=data && data.rates ? +data.rates.KRW : 0;
+      if(!(r>0)) throw new Error('malformed');
+      fxRate=r; fxRateDate=data.date||todayISO(); saveRate();
+      rateFetchState.done=true; rateFetchState.ok=true;
+      clearFormError();   // a missing-rate error is now moot
+    }catch(e){
+      // Offline or API down: fall back to the cached rate (if any).
+      rateFetchState.done=true; rateFetchState.ok=false;
+    }
+    render();             // re-render totals with whatever rate we ended up with
+  }
+  fetchLiveRate();
 </script>
 </body>
 </html>
